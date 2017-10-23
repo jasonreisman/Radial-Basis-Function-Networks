@@ -106,8 +106,8 @@ class LogisticRegression(BaseEstimator, ClassifierMixin):
         # Calculate new weights if warm_start is set to False or the method fit was never ran.
         if (self.warm_start is False) or (hasattr(self, 'weights_') is False):
 
-            self.weights_ = np.zeros((self.n_classes_ - 1) * self.X_.shape[1])  # shape (n_classes-1 * n_features). Saves the
-            # feature weights for each class excepting the last one.
+            # shape (n_classes-1 * n_features). Saves the feature weights for each class excepting the last one.
+            self.weights_ = np.ones((self.n_classes_ - 1) * self.X_.shape[1]) * np.finfo(float).eps
 
         # Start of bound optimization algorithm
 

@@ -4,8 +4,30 @@ from matplotlib.colors import ListedColormap
 from sklearn import datasets
 from sklearn.model_selection import train_test_split
 from sklearn.metrics import accuracy_score
+from matplotlib.patches import Ellipse
 
 from classifiers.logisitc_regression import LogisticRegression
+from mixtures.gmm import GaussianMixture
+
+# returns an Ellipse object when given a center and covariance matrix
+def get_ellipse(mean, cov):
+
+    def eigsorted(cov):
+        vals, vecs = np.linalg.eigh(cov)
+        order = vals.argsort()[::-1]
+        return vals[order], vecs[:,order]
+
+    vals, vecs = np.linalg.eigh(cov)
+    order = vals.argsort()[::-1]
+
+    vals, vecs = eigsorted(cov)
+    theta = np.degrees(np.arctan2(*vecs[:, 0][::-1]))
+
+    # Width and height are "full" widths, not radius
+    width, height = 4 * np.sqrt(vals)
+    ellip = Ellipse(xy=mean, width=width, height=height, angle=theta, fill=False)
+
+    return ellip
 
 def test_logReg_2classes():
 
@@ -121,6 +143,40 @@ def test_logReg_blobs():
     accuracy = accuracy_score(y_test, y_pred)
     pass
 
+def test_gmm():
+    # create a synthetic data set made of gaussians
+    N1 = 500
+    N2 = 500
+    N3 = 500
+    X = np.zeros((N1 + N2 + N3, 2))
+    y = np.zeros((N1 + N2 + N3))
+    X[:N1, :] = np.random.multivariate_normal(mean=[0, 0], cov=[[7, -3], [-3, 8]], size=N1)
+    X[N1:N1 + N2, :] = np.random.multivariate_normal(mean=[20, 20], cov=[[6, -5], [-5, 5]], size=N2)
+    X[N1 + N2:N1 + N2 + N3, :] = np.random.multivariate_normal(mean=[-20, 20], cov=[[2, 2], [2, 3]], size=N3)
+
+    gmm = GaussianMixture(n_mixtures=3, covariance_type='full', reg_covar=1e-6, n_iter=10, init_params='kmeans',
+                          weights_init=None, means_init=None, random_state=None, warm_start=True)
+
+    gmm.fit(X, weights_update=None)
+    gmm.fit(X, weights_update=np.array([1,100,1]))
+
+    centers = gmm.means_
+    cov_matrices = gmm.covariances_
+
+    # plot data
+    plt.figure()
+    ax = plt.gca()
+    plt.scatter(X[:, 0], X[:, 1], color='red', marker='*')
+    for i in range(len(centers)):
+        plt.scatter(centers[i][0], centers[i][1], color='black', marker='o', label='versicolor')
+    for i in range(len(centers)):
+        ellipse = get_ellipse(centers[i], cov_matrices[i, :, :])
+        ax.add_patch(ellipse)
+
+    plt.tight_layout()
+    plt.show()
+    pass
+
 if __name__ == '__main__':
 
     from sklearn.utils.estimator_checks import check_estimator
@@ -131,8 +187,8 @@ if __name__ == '__main__':
     #test_classifier()
     #test_logReg_2classes()
     #test_logReg_3classes()
-    test_logReg_blobs()
-
+    #test_logReg_blobs()
+    test_gmm()
 
 
     pass
