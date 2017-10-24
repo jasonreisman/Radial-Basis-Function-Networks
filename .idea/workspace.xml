@@ -4,14 +4,7 @@
     <bookmark url="file://$PROJECT_DIR$/main/main.py" line="219" />
   </component>
   <component name="ChangeListManager">
-    <list default="true" id="bb634fc4-c981-44e8-a141-1163dabd7532" name="Default" comment="">
-      <change type="DELETED" beforePath="$PROJECT_DIR$/tests/tests.py" afterPath="" />
-      <change type="MOVED" beforePath="$PROJECT_DIR$/tests/__init__.py" afterPath="$PROJECT_DIR$/classifiers/rbfn.py" />
-      <change type="MODIFICATION" beforePath="$PROJECT_DIR$/.idea/workspace.xml" afterPath="$PROJECT_DIR$/.idea/workspace.xml" />
-      <change type="MODIFICATION" beforePath="$PROJECT_DIR$/classifiers/logisitc_regression.py" afterPath="$PROJECT_DIR$/classifiers/logisitc_regression.py" />
-      <change type="MODIFICATION" beforePath="$PROJECT_DIR$/main/main.py" afterPath="$PROJECT_DIR$/main/main.py" />
-      <change type="MODIFICATION" beforePath="$PROJECT_DIR$/mixtures/gmm.py" afterPath="$PROJECT_DIR$/mixtures/gmm.py" />
-    </list>
+    <list default="true" id="bb634fc4-c981-44e8-a141-1163dabd7532" name="Default" comment="" />
     <option name="EXCLUDED_CONVERTED_TO_IGNORED" value="true" />
     <option name="TRACKING_ENABLED" value="true" />
     <option name="SHOW_DIALOG" value="false" />
