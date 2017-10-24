@@ -138,7 +138,7 @@ class LogisticRegression(BaseEstimator, ClassifierMixin):
 
         Returns
         -------
-        w : array-like of shape = [n_features, n_classes-1]
+        w : array-like of shape = [n_features+1, n_classes-1]
             Feature weights of the classifiers.
         """
 

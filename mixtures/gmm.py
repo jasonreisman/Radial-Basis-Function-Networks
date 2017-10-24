@@ -74,7 +74,7 @@ class GaussianMixture(object):
         self.random_state = random_state
         self.warm_start = warm_start
 
-    def fit(self, X, y=None, weights_update=None):
+    def fit(self, X, y=None, weights=None):
         """Fits the gaussian mixtures to the data.
 
         Parameters
@@ -84,9 +84,8 @@ class GaussianMixture(object):
         y : None
             There is no need of a target in a transformer, yet the pipeline API
             requires this parameter.
-        weights_update : array-like, shape (n_mixtures, ), default = None
-            Vector to be used in the weight updates. Each element is proportional
-            to the weight of the corresponding mixture.
+        weights : array-like, shape (n_mixtures, ), default = None
+            Outside vector giving the mixtures weights.
 
         Returns
         -------
@@ -95,9 +94,9 @@ class GaussianMixture(object):
         """
 
         # Check parameters (Incomplete!)
-        if (weights_update is not None) and (weights_update.size != self.n_mixtures):
+        if (weights is not None) and (weights.size != self.n_mixtures):
             raise ValueError("Vector (weights_update) must have lenght equal to n_mixtures; got (weights_update lenght = %r)"
-                             % weights_update.size)
+                             % weights.size)
 
         X = check_array(X)
 
@@ -122,10 +121,9 @@ class GaussianMixture(object):
             for i in range(self.n_mixtures):
                 self.covariances_[i, :, :] = np.eye(X.shape[1])
 
-        # Update weights here if weights_update vector is passed. (This vector may be the weights of a log reg)
-        if weights_update is not None:
-            weights_abs = np.absolute(weights_update)
-            self.weights_ = weights_abs / np.sum(weights_abs)
+        # Update weights here if weights vector is passed. (This vector may be calculated with the weights of a log reg)
+        if weights is not None:
+            self.weights_ = weights
 
 
         for j in range(self.n_iter):
@@ -156,7 +154,7 @@ class GaussianMixture(object):
                     self.covariances_[i, :, :] = np.diag(diag)
 
                 # Update weights here if weights_update vector is not passed
-                if weights_update is None:
+                if weights is None:
                     self.weights_[i] = (1 / z.shape[0]) * np.sum(z)
 
         return self
