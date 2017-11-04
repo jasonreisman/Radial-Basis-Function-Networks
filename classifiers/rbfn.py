@@ -1,3 +1,5 @@
+import numbers
+
 import numpy as np
 from sklearn.base import BaseEstimator, ClassifierMixin
 from sklearn.utils.validation import check_X_y, check_array, check_is_fitted
@@ -5,25 +7,6 @@ from sklearn.utils.multiclass import unique_labels
 
 from classifiers.logisitc_regression import LogisticRegression
 from mixtures.gmm import GaussianMixture
-
-def calculate_gmm_weights(logReg_weights):
-    """ Calculates the weights to be passed to the GMM based on the weights of the Log Reg.
-
-        Parameters
-        ----------
-        logReg_weights : array-like, shape (n_features, n_classes-1)
-            Matrix which contains the Log reg weights.
-
-        Returns
-        -------
-        gmm_weights : array, shape (n_features, )
-            Weights for the GMM based on the Log Reg weights.
-        """
-
-    logReg_weights_abs = np.absolute(logReg_weights)
-    gmm_weights = np.sum(logReg_weights_abs, axis=1) / np.sum(logReg_weights_abs)
-
-    return gmm_weights
 
 
 class RadialBasisFunctionNetwork(BaseEstimator, ClassifierMixin):
@@ -35,9 +18,10 @@ class RadialBasisFunctionNetwork(BaseEstimator, ClassifierMixin):
 
     Parameters
     ----------
-    link : boolean, defaults to True
-        If True the weights of the Logistic Regression are used to calculate
-        the weights of the GMM.
+    link : integer
+        Proportion of log reg weights used for the mixture weights.
+        0 : no log reg weights.
+        1 : only log reg weights
     n_iter : int, defaults to 100
         Number of iterations performed in method fit.
 
@@ -130,6 +114,10 @@ class RadialBasisFunctionNetwork(BaseEstimator, ClassifierMixin):
         # Store the number of classes
         self.n_classes_ = self.classes_.size
 
+        # Check link parameter
+        if not isinstance(self.link, numbers.Number) or self.link < 0 or self.link > 1:
+            raise ValueError("link must be a number in the interval [0,1]. Valor passed: %r" % self.link)
+
         # Check if there are at least 2 classes
         if self.n_classes_ < 2:
             raise ValueError("This solver needs samples of at least 2 classes"
@@ -146,7 +134,7 @@ class RadialBasisFunctionNetwork(BaseEstimator, ClassifierMixin):
         self.logReg_ = LogisticRegression(l=self.l, n_iter=self.n_iter_logreg)
 
 
-        if self.link == True:
+        if self.link > 0:
 
             gmm_weights = np.ones(self.n_mixtures) / self.n_mixtures
             for i in range(self.n_iter):
@@ -155,7 +143,8 @@ class RadialBasisFunctionNetwork(BaseEstimator, ClassifierMixin):
                 self.logReg_ = self.logReg_.fit(design_matrix, self.y_)
 
                 logReg_weights = self.logReg_.get_weights()
-                gmm_weights = calculate_gmm_weights(logReg_weights[1:, :])
+                gmm_weights = self.gmm_.weights_
+                gmm_weights = self.calculate_gmm_weights(logReg_weights[1:, :], gmm_weights)
 
         else:
 
@@ -235,3 +224,33 @@ class RadialBasisFunctionNetwork(BaseEstimator, ClassifierMixin):
         y = self.logReg_.predict(X_likelihood)
 
         return y
+
+
+    def calculate_gmm_weights(self, logReg_weights, gmm_weights):
+        """ Calculates the weights to be passed to the GMM.
+
+        The result is proportional to the parameter link and
+        is based based on the weights of the Log Reg and the degrees
+        of belonging of the points to the mixtures.
+
+            Parameters
+            ----------
+            logReg_weights :  array, shape (1, n_features) or (n_classes, n_features)
+                Coefficient of the features in the decision function.
+                logReg_weights is of shape (1, n_features) when the given problem is binary.
+            gmm_weights : array-like, shape (n_components,)
+                The weights of each mixture components.
+
+            Returns
+            -------
+            gmm_weights : array, shape (n_features, )
+                Weights for the GMM.
+            """
+
+        # Weights based on the log reg weights.
+        logReg_weights_abs = np.absolute(logReg_weights)
+        gmm_weights_logReg = np.sum(logReg_weights_abs, axis=1) / np.sum(logReg_weights_abs)
+
+        gmm_weights = (1 - self.link) * gmm_weights + self.link * gmm_weights_logReg
+
+        return gmm_weights

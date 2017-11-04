@@ -4,6 +4,24 @@ from sklearn.cluster import KMeans
 from scipy.stats import multivariate_normal
 
 
+def mult_gauss_pdf(X, mean, covariance):
+    dim = X.shape[1]
+    if dim == mean.size and (dim, dim) == covariance.shape:
+        det = np.linalg.det(covariance)
+        if det == 0:
+            raise np.linalg.LinAlgError('singular matrix')
+
+        norm_const = 1.0 / (((2 * np.pi) ** (dim / 2.0)) * (det ** 0.5))
+        X_mean = X - mean
+        precision = np.linalg.inv(covariance)
+        likelihoods = np.zeros(X.shape[0])
+        for i in range(X.shape[0]):
+            sample = X_mean[i, :]
+            result = np.exp(-0.5 * (np.dot(np.dot(sample, precision), sample)))
+            likelihoods[i] = norm_const * result
+            return likelihoods
+    else:
+        raise NameError("The dimensions of the input don't match")
 
 class GaussianMixture(object):
     """Gaussian Mixture.
@@ -114,12 +132,23 @@ class GaussianMixture(object):
                 if self.init_params == 'kmeans':
                     kmeans = KMeans(n_clusters=self.n_mixtures).fit(X)
                     self.means_ = kmeans.cluster_centers_
+
                 elif self.init_params == 'random':
                     self.means_ = X[np.random.randint(X.shape[0], size=self.n_mixtures), :]
 
             self.covariances_ = np.zeros((self.n_mixtures, X.shape[1], X.shape[1]))
-            for i in range(self.n_mixtures):
-                self.covariances_[i, :, :] = np.eye(X.shape[1])
+            if self.init_params == 'kmeans':
+                labels = kmeans.labels_
+                for label in np.unique(labels):
+                    cov = np.cov(X[labels == label, :].T)
+                    diag = cov.diagonal()
+                    self.covariances_[label, :, :] = np.diag(diag)
+
+            elif self.init_params == 'random':
+                for i in range(self.n_mixtures):
+                    self.covariances_[i, :, :] = np.eye(X.shape[1])
+
+            self.z_ = np.zeros((X.shape[0], self.n_mixtures))
 
         # Update weights here if weights vector is passed. (This vector may be calculated with the weights of a log reg)
         if weights is not None:
@@ -135,8 +164,9 @@ class GaussianMixture(object):
                 # upgrade the degrees of belonging to the gauss function (z)
                 numerator = post_probs[:, i] * self.weights_[i]
                 denominator = np.sum(post_probs * self.weights_, axis=1)  # denominator of z
-                z = numerator / denominator
-                z = z.reshape(z.size, 1)
+                z = numerator / (denominator + np.finfo(float).eps)
+                z = z.reshape((z.size, 1))
+
 
                 # update mean
                 numerator = np.sum(X * z, axis=0)
@@ -153,9 +183,10 @@ class GaussianMixture(object):
                     diag = self.covariances_[i, :, :].diagonal()
                     self.covariances_[i, :, :] = np.diag(diag)
 
-                # Update weights here if weights_update vector is not passed
-                if weights is None:
-                    self.weights_[i] = (1 / z.shape[0]) * np.sum(z)
+                # Update weights based on the z
+                self.weights_[i] = (1 / z.shape[0]) * np.sum(z)
+
+                self.z_[:, i] = z.flat
 
         return self
 
@@ -168,7 +199,7 @@ class GaussianMixture(object):
             The input samples.
         Returns
         -------
-        probs : array-like of shape = [n_samples, n_mixtures]
+        post_probs : array-like of shape = [n_samples, n_mixtures]
             Matrix containing the predicted posterior probabilities for each gaussian in the mixture.
         """
 
@@ -183,10 +214,12 @@ class GaussianMixture(object):
         for i in range(self.n_mixtures):
             try:
                 post_probs[:, i] = multivariate_normal.pdf(X, mean=self.means_[i], cov=self.covariances_[i, :, :])
+                #post_probs[:, i] = mult_gauss_pdf(X, self.means_[i], self.covariances_[i, :, :])
             except np.linalg.LinAlgError as err:
                 if 'singular matrix' in str(err):
                     cov = self.covariances_[i, :, :] + np.eye(self.covariances_[i, :, :].shape[0]) * self.reg_covar  # Add regularization to matrix
                     post_probs[:, i] = multivariate_normal.pdf(X, mean=self.means_[i], cov=cov)
+                    #post_probs[:, i] = mult_gauss_pdf(X, self.means_[i], cov)
                 else:
                     raise
 

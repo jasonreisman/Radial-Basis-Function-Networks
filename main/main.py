@@ -211,13 +211,13 @@ def test_gmm():
 def test_rbfn():
 
     # Import first two features from iris data set
-    X, y = datasets.make_blobs(n_samples=100, n_features=2, centers=3, cluster_std=1.0, center_box=(-10.0, 10.0), shuffle=True, random_state=2)
+    X, y = datasets.make_blobs(n_samples=500, n_features=2, centers=2, cluster_std=1.0, center_box=(-10.0, 10.0), shuffle=True, random_state=2)
 
     # Divide in train and test
     X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.3, random_state=1)
 
     # Create and fit the Logistic Regression to
-    rbfn = RadialBasisFunctionNetwork(link=True, n_iter=1000, n_mixtures=3, covariance_type='full', reg_covar=1e-6,
+    rbfn = RadialBasisFunctionNetwork(link=1, n_iter=100, n_mixtures=2, covariance_type='full', reg_covar=1e-6,
                                       n_iter_gmm=1, init_params='kmeans', weights_init=None, means_init=None,
                                       random_state=None, l=0.001, n_iter_logreg=1)
     rbfn.fit(X_train, y_train)
@@ -250,6 +250,28 @@ def test_rbfn():
     plot_decision_regions(X_train, X_test, y_train, y_test, rbfn, resolution=0.1)
     pass
 
+def mnist():
+    np.random.seed(2)
+    digits = datasets.load_digits()
+    X = digits.data
+    y = digits.target
+    # Divide in train and test
+    X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.3, random_state=1)
+
+    # Create and fit the Logistic Regression to
+    rbfn = RadialBasisFunctionNetwork(link=0.1, n_iter=20, n_mixtures=10, covariance_type='diag', reg_covar=1e-6,
+                                      n_iter_gmm=1, init_params='kmeans', weights_init=None, means_init=None,
+                                      random_state=None, l=0.01, n_iter_logreg=1)
+    rbfn.fit(X_train, y_train)
+
+    # Make predictions
+    y_pred_prob = rbfn.predict_proba(X_test)
+    y_pred = rbfn.predict(X_test)
+    accuracy = accuracy_score(y_test, y_pred)
+    print(accuracy)
+    pass
+
+
 if __name__ == '__main__':
 
     from sklearn.utils.estimator_checks import check_estimator
@@ -257,12 +279,13 @@ if __name__ == '__main__':
     def test_classifier():
         return check_estimator(RadialBasisFunctionNetwork)
 
-    test_classifier()
+    #test_classifier()
     #test_logReg_2classes()
     #test_logReg_3classes()
     #test_logReg_blobs()
     #test_gmm()
     #test_rbfn()
+    mnist()
 
 
     pass
