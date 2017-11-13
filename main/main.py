@@ -86,7 +86,7 @@ def test_logReg_2classes():
     # Plot decision boundaries
     weights = logReg.get_weights()
     x_min, x_max = min(X_train[:,0]), max(X_train[:,0])
-    y_min, y_max = -(weights[0]+weights[1]*x_min)/weights[2], -(weights[0]+weights[1]*x_max)/weights[2]
+    y_min, y_max = -(weights[0, 0]+weights[1, 0]*x_min)/weights[2, 0], -(weights[0, 0]+weights[1, 0]*x_max)/weights[2, 0]
     plt.plot([x_min, x_max], [y_min, y_max])
 
     plt.tight_layout()
@@ -96,6 +96,7 @@ def test_logReg_2classes():
     y_pred_prob = logReg.predict_proba(X_test)
     y_pred = logReg.predict(X_test)
     accuracy = accuracy_score(y_test, y_pred)
+    print(accuracy)
     pass
 
 def test_logReg_3classes():
@@ -135,18 +136,29 @@ def test_logReg_3classes():
     y_pred_prob = logReg.predict_proba(X_test)
     y_pred = logReg.predict(X_test)
     accuracy = accuracy_score(y_test, y_pred)
+    print(accuracy)
     pass
 
 def test_logReg_blobs():
 
-    # Import first two features from iris data set
-    X, y = datasets.make_blobs(n_samples=100, n_features=2, centers=3, cluster_std=1.0, center_box=(-10.0, 10.0), shuffle=True, random_state=2)
+    # create a synthetic data set made of gaussians
+    N1 = 500
+    N2 = 500
+    N3 = 500
+    X = np.zeros((N1 + N2 + N3, 5))
+    y = np.zeros((N1 + N2 + N3))
+    y[N1:N1 + N2] = 1
+    y[N1 + N2:N1 + N2 + N3] = 2
+    X[:N1, :] = np.random.multivariate_normal(mean=[0, 0, 0, 0, 0], cov=[[7, 0, 0, 0, 0], [0, 8, 0, 0, 0], [0, 0, 3, 0, 0], [0, 0, 0, 9, 0], [0, 0, 0, 0, 50]], size=N1)
+    X[N1:N1 + N2, :] = np.random.multivariate_normal(mean=[29, 100, 50, 200, 100], cov=[[20, 0, 0, 0, 0], [0, 1, 0, 0, 0], [0, 0, 2, 0, 0], [0, 0, 0, 30, 0], [0, 0, 0, 0, 0.1]], size=N2)
+    X[N1 + N2:N1 + N2 + N3, :] = np.random.multivariate_normal(mean=[-29, -100, -50, -200, 0], cov=[[5, 0, 0, 0, 0], [0, 2, 0, 0, 0], [0, 0, 4.5, 0, 0], [0, 0, 0, 6.5, 0], [0, 0, 0, 0, 0]], size=N3)
+
 
     # Divide in train and test
     X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.3, random_state=7331)
 
     # Create and fit the Logistic Regression to
-    logReg = LogisticRegression(l=0, n_iter=1000, warm_start=False)
+    logReg = LogisticRegression(l=0.01, n_iter=1000, warm_start=False)
     logReg.fit(X_train, y_train)
 
     # Plot train and test data
@@ -168,10 +180,13 @@ def test_logReg_blobs():
     plt.tight_layout()
     plt.show()
 
+    #plot_decision_regions(X_train, X_test, y_train, y_test, logReg, resolution=0.1)
+
     # Make predictions
     y_pred_prob = logReg.predict_proba(X_test)
     y_pred = logReg.predict(X_test)
     accuracy = accuracy_score(y_test, y_pred)
+    print(accuracy)
     pass
 
 def test_gmm():
@@ -188,8 +203,7 @@ def test_gmm():
     gmm = GaussianMixture(n_mixtures=3, covariance_type='full', reg_covar=1e-6, n_iter=10, init_params='kmeans',
                           weights_init=None, means_init=None, random_state=None, warm_start=True)
 
-    gmm.fit(X, weights_update=None)
-    gmm.fit(X, weights_update=np.array([1,100,1]))
+    gmm.fit(X)
 
     centers = gmm.means_
     cov_matrices = gmm.covariances_
@@ -208,16 +222,40 @@ def test_gmm():
     plt.show()
     pass
 
+def test_gmm_D():
+    np.random.seed(1)
+    # create a synthetic data set made of gaussians
+    N1 = 500
+    N2 = 500
+    N3 = 500
+    X = np.zeros((N1 + N2 + N3, 5))
+    y = np.zeros((N1 + N2 + N3))
+    X[:N1, :] = np.random.multivariate_normal(mean=[0, 0, 0, 0, 0], cov=[[7, 0, 0, 0, 0], [0, 8, 0, 0, 0], [0, 0, 3, 0, 0], [0, 0, 0, 9, 0], [0, 0, 0, 0, 50]], size=N1)
+    X[N1:N1 + N2, :] = np.random.multivariate_normal(mean=[29, 100, 50, 200, 100], cov=[[20, 0, 0, 0, 0], [0, 1, 0, 0, 0], [0, 0, 2, 0, 0], [0, 0, 0, 30, 0], [0, 0, 0, 0, 0.1]], size=N2)
+    X[N1 + N2:N1 + N2 + N3, :] = np.random.multivariate_normal(mean=[-29, -100, -50, -200, 0], cov=[[5, 0, 0, 0, 0], [0, 2, 0, 0, 0], [0, 0, 4.5, 0, 0], [0, 0, 0, 6.5, 0], [0, 0, 0, 0, 0]], size=N3)
+
+#    gmm = GaussianMixture(n_mixtures=3, covariance_type='full', reg_covar=1e-6, n_iter=100, init_params='kmeans',
+#                          weights_init=None, means_init=None, random_state=None, warm_start=True)
+
+    from sklearn.mixture import GaussianMixture
+    gmm = GaussianMixture(n_components=3, max_iter=100)
+    gmm.fit(X)
+
+    centers = gmm.means_
+    cov_matrices = gmm.covariances_
+    pass
+
+
 def test_rbfn():
 
     # Import first two features from iris data set
-    X, y = datasets.make_blobs(n_samples=500, n_features=2, centers=2, cluster_std=1.0, center_box=(-10.0, 10.0), shuffle=True, random_state=2)
+    X, y = datasets.make_blobs(n_samples=500, n_features=2, centers=3, cluster_std=1.0, center_box=(-10.0, 10.0), shuffle=True, random_state=2)
 
     # Divide in train and test
     X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.3, random_state=1)
 
     # Create and fit the Logistic Regression to
-    rbfn = RadialBasisFunctionNetwork(link=1, n_iter=100, n_mixtures=2, covariance_type='full', reg_covar=1e-6,
+    rbfn = RadialBasisFunctionNetwork(link=1, n_iter=100, n_mixtures=3, covariance_type='full', reg_covar=1e-6,
                                       n_iter_gmm=1, init_params='kmeans', weights_init=None, means_init=None,
                                       random_state=None, l=0.001, n_iter_logreg=1)
     rbfn.fit(X_train, y_train)
@@ -251,15 +289,15 @@ def test_rbfn():
     pass
 
 def mnist():
-    np.random.seed(2)
+    np.random.seed(1)
     digits = datasets.load_digits()
     X = digits.data
     y = digits.target
     # Divide in train and test
     X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.3, random_state=1)
 
-    # Create and fit the Logistic Regression to
-    rbfn = RadialBasisFunctionNetwork(link=0.1, n_iter=20, n_mixtures=10, covariance_type='diag', reg_covar=1e-6,
+    # Create and fit the Logistic Regression
+    rbfn = RadialBasisFunctionNetwork(link=0, n_iter=100, n_mixtures=10, covariance_type='full', reg_covar=1e-6,
                                       n_iter_gmm=1, init_params='kmeans', weights_init=None, means_init=None,
                                       random_state=None, l=0.01, n_iter_logreg=1)
     rbfn.fit(X_train, y_train)
@@ -284,8 +322,8 @@ if __name__ == '__main__':
     #test_logReg_3classes()
     #test_logReg_blobs()
     #test_gmm()
+    #test_gmm_D()
     #test_rbfn()
     mnist()
-
 
     pass

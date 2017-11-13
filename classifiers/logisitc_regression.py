@@ -6,22 +6,21 @@ from sklearn.utils.validation import check_X_y, check_array, check_is_fitted
 from sklearn.utils.multiclass import unique_labels
 from utils.one_hot_encoder import OneHotEncoder
 
-def logistic(x):
-    """Calculates the logistic of x.
+def logistic(X):
+    """Calculates the logistic of each row of X.
 
     Parameters
     ----------
-    x : array-like, shape (n,)
-        Numerical vector to be computed.
+    X : array-like, shape (n_samples, n_classes)
 
     Returns
     -------
-    y : array-like, shape (n,)
-        Logistic of x.
+    y : array-like, shape (n_samples, n_classes)
+        Logistic of X.
     """
 
-    exp_x = np.exp(x + np.finfo(float).eps)
-    return exp_x / (np.sum(exp_x, axis=1) + 1).reshape((x.shape[0], 1))
+    exp_X = np.exp(X + np.finfo(float).eps)
+    return exp_X / (np.sum(exp_X, axis=1)).reshape((X.shape[0], 1))
 
 class LogisticRegression(BaseEstimator, ClassifierMixin):
     """ Logistic Regression (aka logit, MaxEnt) classifiers.
@@ -101,20 +100,20 @@ class LogisticRegression(BaseEstimator, ClassifierMixin):
 
         # One hot encodes target
         self.oneHot_ = OneHotEncoder().fit(self.y_)
-        y_1hot = self.oneHot_.transform(self.y_)[:, :-1]
+        y_1hot = self.oneHot_.transform(self.y_)
 
         # Calculate new weights if warm_start is set to False or the method fit was never ran.
         if (self.warm_start is False) or (hasattr(self, 'weights_') is False):
 
-            # shape (n_classes-1 * n_features). Saves the feature weights for each class excepting the last one.
-            self.weights_ = np.ones((self.n_classes_ - 1) * self.X_.shape[1]) * np.finfo(float).eps
+            # shape (n_classes * n_features). Saves the feature weights for each class.
+            self.weights_ = np.ones(self.n_classes_ * self.X_.shape[1]) * np.finfo(float).eps
 
         # Start of bound optimization algorithm
 
-        # B : array-like, shape ((n_classes-1)*n_features, (n_classes-1)*n_features)
+        # B : array-like, shape (n_classes * n_features, n_classes- * n_features)
         #    Negative definite lower bound of the Hessian.
         B = np.kron(
-            -0.5 * (np.eye(self.n_classes_ - 1) - np.ones((self.n_classes_ - 1, self.n_classes_ - 1)) / self.n_classes_)
+            -0.5 * (np.eye(self.n_classes_) - np.ones((self.n_classes_, self.n_classes_)) / self.n_classes_)
             ,np.dot(self.X_.T, self.X_))
 
         # denom : array-like, shape ((n_classes-1)*n_features, (n_classes-1)*n_features)
@@ -123,9 +122,9 @@ class LogisticRegression(BaseEstimator, ClassifierMixin):
 
         for i in range(self.n_iter):
 
-            p = logistic(np.dot(self.X_, self.weights_.reshape(self.X_.shape[1], self.n_classes_-1, order='F')))
+            p = logistic(np.dot(self.X_, self.weights_.reshape(self.X_.shape[1], self.n_classes_, order='F')))
             dif = y_1hot - p
-            g = np.zeros((self.n_classes_ - 1) * self.X_.shape[1])
+            g = np.zeros((self.n_classes_) * self.X_.shape[1])
             for j in range(self.X_.shape[0]):  # (to be improved)
                 g += np.kron(dif[j, :], self.X_[j, :])
             self.weights_ = np.dot(denom, np.dot(B, self.weights_) - g)
@@ -145,7 +144,7 @@ class LogisticRegression(BaseEstimator, ClassifierMixin):
         # Check if fit had been called
         check_is_fitted(self, 'weights_')
 
-        w = self.weights_.reshape(self.X_.shape[1], self.n_classes_-1, order='F')
+        w = self.weights_.reshape(self.X_.shape[1], self.n_classes_, order='F')
 
         return w
 
@@ -174,10 +173,6 @@ class LogisticRegression(BaseEstimator, ClassifierMixin):
 
         # Calculate probabilities
         probs = logistic(np.dot(X, weights))
-
-        # Ads a column with the probability of the last class
-        last_class_prob = (1 - np.sum(probs, axis=1)).reshape(probs.shape[0], 1)
-        probs = np.hstack([probs, last_class_prob])
 
         return probs
 

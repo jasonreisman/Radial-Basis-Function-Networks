@@ -2,26 +2,7 @@ import numpy as np
 from sklearn.utils.validation import check_array, check_is_fitted
 from sklearn.cluster import KMeans
 from scipy.stats import multivariate_normal
-
-
-def mult_gauss_pdf(X, mean, covariance):
-    dim = X.shape[1]
-    if dim == mean.size and (dim, dim) == covariance.shape:
-        det = np.linalg.det(covariance)
-        if det == 0:
-            raise np.linalg.LinAlgError('singular matrix')
-
-        norm_const = 1.0 / (((2 * np.pi) ** (dim / 2.0)) * (det ** 0.5))
-        X_mean = X - mean
-        precision = np.linalg.inv(covariance)
-        likelihoods = np.zeros(X.shape[0])
-        for i in range(X.shape[0]):
-            sample = X_mean[i, :]
-            result = np.exp(-0.5 * (np.dot(np.dot(sample, precision), sample)))
-            likelihoods[i] = norm_const * result
-            return likelihoods
-    else:
-        raise NameError("The dimensions of the input don't match")
+from scipy.misc import logsumexp
 
 class GaussianMixture(object):
     """Gaussian Mixture.
@@ -137,18 +118,9 @@ class GaussianMixture(object):
                     self.means_ = X[np.random.randint(X.shape[0], size=self.n_mixtures), :]
 
             self.covariances_ = np.zeros((self.n_mixtures, X.shape[1], X.shape[1]))
-            if self.init_params == 'kmeans':
-                labels = kmeans.labels_
-                for label in np.unique(labels):
-                    cov = np.cov(X[labels == label, :].T)
-                    diag = cov.diagonal()
-                    self.covariances_[label, :, :] = np.diag(diag)
-
-            elif self.init_params == 'random':
-                for i in range(self.n_mixtures):
-                    self.covariances_[i, :, :] = np.eye(X.shape[1])
-
-            self.z_ = np.zeros((X.shape[0], self.n_mixtures))
+            cov = np.cov(X.T) / self.n_mixtures
+            for i in range(self.n_mixtures):
+                self.covariances_[i, :, :] = cov
 
         # Update weights here if weights vector is passed. (This vector may be calculated with the weights of a log reg)
         if weights is not None:
@@ -157,70 +129,248 @@ class GaussianMixture(object):
 
         for j in range(self.n_iter):
 
-            post_probs = self.predict_proba(X)
+            self.resp_ = self._e_step(X)
 
-            for i in range(self.n_mixtures):
-
-                # upgrade the degrees of belonging to the gauss function (z)
-                numerator = post_probs[:, i] * self.weights_[i]
-                denominator = np.sum(post_probs * self.weights_, axis=1)  # denominator of z
-                z = numerator / (denominator + np.finfo(float).eps)
-                z = z.reshape((z.size, 1))
-
-
-                # update mean
-                numerator = np.sum(X * z, axis=0)
-                denominator = np.sum(z)
-                self.means_[i] = numerator / denominator
-
-                # update cov_matrix
-                centered_X = (X - self.means_[i])
-                numerator = np.dot(centered_X.T, centered_X * z)
-                self.covariances_[i, :, :] = numerator / denominator
-
-                # maintains only the elements of the diagonal matrix if the covariance type is diagonal
-                if self.covariance_type == 'diag':
-                    diag = self.covariances_[i, :, :].diagonal()
-                    self.covariances_[i, :, :] = np.diag(diag)
-
-                # Update weights based on the z
-                self.weights_[i] = (1 / z.shape[0]) * np.sum(z)
-
-                self.z_[:, i] = z.flat
+            self.weights_, self.means_, self.covariances_ = self._m_step(X)
 
         return self
 
     def predict_proba(self, X):
-        """ Predict posterior probability of each component given the data.
+        """Predict posterior probability of each component given the data.
 
         Parameters
         ----------
-        X : array-like of shape = [n_samples, n_features]
-            The input samples.
+        X : array-like, shape (n_samples, n_features)
+            List of n_features-dimensional data points. Each row
+            corresponds to a single data point.
+
         Returns
         -------
-        post_probs : array-like of shape = [n_samples, n_mixtures]
-            Matrix containing the predicted posterior probabilities for each gaussian in the mixture.
+        resp : array, shape (n_samples, n_components)
+            Returns the probability each Gaussian (state) in
+            the model given each sample.
         """
 
         # Check is fit had been called
-        check_is_fitted(self, 'weights_')
+        check_is_fitted(self, 'resp_')
 
-        # Input validation
-        X = check_array(X)
+        log_resp = self._estimate_log_resp(X)
+        return np.exp(log_resp)
 
-        post_probs = np.zeros((X.shape[0], self.n_mixtures))
+    def _e_step(self, X):
+        """E step.
+
+        Parameters
+        ----------
+        X : array-like, shape (n_samples, n_features)
+
+        Returns
+        -------
+        responsibility : array, shape (n_samples, n_mixtures)
+            Posterior probabilities (or responsibilities) of
+            the point of each sample in X.
+        """
+
+        responsibility = np.exp(self._estimate_log_resp(X))
+
+        return responsibility
+
+    def _estimate_log_resp(self, X):
+        """Estimate log responsibilities for each sample.
+
+        Compute the responsibilities for each sample in X with respect to
+        the current state of the model.
+
+        Parameters
+        ----------
+        X : array-like, shape (n_samples, n_features)
+
+        Returns
+        -------
+
+        log_responsibilities : array, shape (n_samples, n_components)
+            logarithm of the responsibilities
+        """
+
+        weighted_log_prob = self._estimate_weighted_log_prob(X)
+        log_responsibilities = weighted_log_prob - logsumexp(weighted_log_prob, axis=1).reshape(-1, 1)
+
+        return log_responsibilities
+
+
+    def _estimate_weighted_log_prob(self, X):
+        """Estimate the weighted log-probabilities, log P(X | theta) + log weights.
+
+        Parameters
+        ----------
+        X : array-like, shape (n_samples, n_features)
+
+        Returns
+        -------
+        weighted_log_prob : array, shape (n_samples, n_component)
+        """
+
+        weighted_log_prob = self._estimate_log_prob(X) + np.log(self.weights_)
+
+        return weighted_log_prob
+
+    def _estimate_log_prob(self, X):
+        """Estimate the log-probabilities log P(X | theta).
+
+        Compute the log-probabilities per each mixture for each sample in X with respect to
+        the current state of the model.
+
+        Parameters
+        ----------
+        X : array-like, shape (n_samples, n_features)
+
+        Returns
+        -------
+        log_prob : array, shape (n_samples, n_component)
+        """
+
+        log_prob = np.empty((X.shape[0], self.n_mixtures))
 
         for i in range(self.n_mixtures):
             try:
-                post_probs[:, i] = multivariate_normal.pdf(X, mean=self.means_[i], cov=self.covariances_[i, :, :])
-                #post_probs[:, i] = mult_gauss_pdf(X, self.means_[i], self.covariances_[i, :, :])
+                log_prob[:, i] = multivariate_normal.logpdf(X, mean=self.means_[i], cov=self.covariances_[i, :, :])
             except np.linalg.LinAlgError as err:
                 if 'singular matrix' in str(err):
-                    cov = self.covariances_[i, :, :] + np.eye(self.covariances_[i, :, :].shape[0]) * self.reg_covar  # Add regularization to matrix
-                    post_probs[:, i] = multivariate_normal.pdf(X, mean=self.means_[i], cov=cov)
-                    #post_probs[:, i] = mult_gauss_pdf(X, self.means_[i], cov)
+                    reg_cov = self.covariances_[i, :, :] + np.eye(self.covariances_[i, :, :].shape[0]) * self.reg_covar
+                    log_prob[:, i] = multivariate_normal.logpdf(X, mean=self.means_[i], cov=reg_cov)
+            except ValueError as err:
+                if 'the input matrix must be positive semidefinite' in str(err):
+                    reg_cov = self.covariances_[i, :, :] + np.eye(self.covariances_[i, :, :].shape[0]) * self.reg_covar
+                    log_prob[:, i] = multivariate_normal.logpdf(X, mean=self.means_[i], cov=reg_cov)
                 else:
                     raise
 
-        return post_probs
+        return log_prob
+
+    def _m_step(self, X):
+        """M step.
+
+        Parameters
+        ----------
+        X : array-like, shape (n_samples, n_features)
+
+        Returns
+        -------
+        weights : array, shape (n_mixtures,)
+
+        means : array, shape (n_mixtures, n_features)
+
+        covariances : array-like, shape (n_mixtures, n_features, n_features)
+        """
+
+        weights = self._calculate_new_weights()
+        means = self._calculate_new_means(X)
+        covariances = self._calculate_new_covariances(X, means)
+
+        return weights, means, covariances
+
+    def _calculate_new_weights(self):
+        """Updates the weights based on the new responsibilities.
+
+         Returns
+         -------
+         weights : array, shape (n_mixtures,)
+         """
+
+        n_samples = self.resp_.shape[0]
+        weights = np.sum(self.resp_, axis=0) / n_samples
+
+        return weights
+
+    def _calculate_new_means(self, X):
+        """Updates the means based on the new responsibilities.
+
+        Parameters
+        ----------
+        X : array-like, shape (n_samples, n_features)
+
+        Returns
+        -------
+        means : array, shape (n_mixtures, n_features)
+        """
+        X_dim = X.shape[1]
+        means = np.empty((self.n_mixtures, X_dim))
+
+        for i in range(self.n_mixtures):
+            numerator = np.sum(X * self.resp_[:, i].reshape(-1, 1), axis=0)
+            denominator = np.sum(self.resp_[:, i])
+            means[i, :] = numerator / denominator
+
+        return means
+
+    def _calculate_new_covariances(self, X, means):
+        """Updates the covariances based on the new responsibilities.
+
+        Parameters
+        ----------
+        X : array-like, shape (n_samples, n_features)
+
+        means : array, shape (n_mixtures, n_features)
+
+        Returns
+        -------
+        covariances : array-like, shape (n_mixtures, n_features, n_features)
+        """
+
+        X_dim = X.shape[1]
+        covariances = np.empty((self.n_mixtures, X_dim, X_dim))
+
+        for i in range(self.n_mixtures):
+            centered_X = (X - means[i, :])
+            numerator = np.dot(centered_X.T, centered_X * self.resp_[:, i].reshape(-1, 1))
+            covariances[i, :, :] = numerator / np.sum(self.resp_[:, i])
+
+            # Maintains only the elements of the diagonal matrix if the covariance type is diagonal
+            if self.covariance_type == 'diag':
+                diag = covariances[i, :, :].diagonal()
+                covariances[i, :, :] = np.diag(diag)
+
+        return covariances
+
+if __name__ == '__main__':
+
+    from sklearn import datasets
+    import matplotlib.pyplot as plt
+    from matplotlib.patches import Ellipse
+    from sklearn.model_selection import train_test_split
+
+
+    # returns an Ellipse object when given a center and covariance matrix
+    def get_ellipse(mean, cov):
+
+        def eigsorted(cov):
+            vals, vecs = np.linalg.eigh(cov)
+            order = vals.argsort()[::-1]
+            return vals[order], vecs[:, order]
+
+        vals, vecs = np.linalg.eigh(cov)
+        order = vals.argsort()[::-1]
+
+        vals, vecs = eigsorted(cov)
+        theta = np.degrees(np.arctan2(*vecs[:, 0][::-1]))
+
+        # Width and height are "full" widths, not radius
+        width, height = 4 * np.sqrt(vals)
+        ellip = Ellipse(xy=mean, width=width, height=height, angle=theta, fill=False)
+
+        return ellip
+
+
+    np.random.seed(1)
+    digits = datasets.load_digits()
+    X = digits.data
+    y = digits.target
+    # Divide in train and test
+    X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.3, random_state=1)
+
+    gmm = GaussianMixture(n_mixtures=10, covariance_type='full', reg_covar=1e-6, n_iter=100, init_params='kmeans',
+                 weights_init=None, means_init=None, random_state=None, warm_start=False)
+
+    gmm.fit(X_train)
+    probs = gmm.predict_proba(X_test)
+    pass

@@ -8,6 +8,31 @@ from sklearn.utils.validation import check_X_y, check_array, check_is_fitted
 from sklearn.utils.multiclass import unique_labels
 from scipy.stats import multivariate_normal
 
+def sparsemax(z):
+    """forward pass for sparsemax
+    this will process a 2d-array $z$, where axis 1 (each row) is assumed to be
+    the the z-vector.
+    """
+
+    z = z - np.max(z, axis=1).reshape(-1, 1)
+
+    # sort z
+    z_sorted = np.sort(z, axis=1)[:, ::-1]
+
+    # calculate k(z)
+    z_cumsum = np.cumsum(z_sorted, axis=1)
+    k = np.arange(1, z.shape[1] + 1)
+    z_check = (1 + k * z_sorted) > z_cumsum
+    k_z = z.shape[1] - np.argmax(z_check[:, ::-1], axis=1)
+
+    # calculate tau(z)
+    tau_sum = z_cumsum[np.arange(0, z.shape[0]), k_z - 1]
+    tau_z = ((tau_sum - 1) / k_z).reshape(-1, 1)
+
+    # calculate p
+    aux = np.maximum(0, z - tau_z)
+    return aux
+
 class RadialBasisFunctionNetwork(BaseEstimator, ClassifierMixin):
     """ Implements a Radial Basis Function Network classifier.
 
@@ -172,14 +197,15 @@ class RadialBasisFunctionNetwork(BaseEstimator, ClassifierMixin):
                                     precisions_init=gmm_precisions, random_state=self.random_state, warm_start=False,
                                     verbose=0, verbose_interval=10)
 
-            if 1 == 1:
+            if False:
                 self.gmm_.fit(X=self.X_)
                 design_matrix = self.gmm_.predict_proba(X=self.X_)
                 self.logReg_.fit(X=design_matrix, y=self.y_)
 
             else:
                 self.gmm_.fit(X=self.X_)
-                design_matrix = self.predict_likelihoods(X=self.X_, means=self.gmm_.means_, covariances=self.gmm_.covariances_)
+                likelihoods = self.predict_likelihoods(X=self.X_, means=self.gmm_.means_, covariances=self.gmm_.covariances_)
+                design_matrix = sparsemax(likelihoods)
                 self.logReg_.fit(X=design_matrix, y=self.y_)
 
             logReg_weights = self.logReg_.coef_
@@ -232,7 +258,7 @@ class RadialBasisFunctionNetwork(BaseEstimator, ClassifierMixin):
                 else:
                     raise
 
-        return post_probs
+        return np.log(post_probs + np.finfo(np.float64).eps)
 
     def get_mixtures(self):
         """Returns the centers and co-variance matrices of the GMM.
@@ -277,8 +303,9 @@ class RadialBasisFunctionNetwork(BaseEstimator, ClassifierMixin):
         # Check is fit had been called
         check_is_fitted(self, 'gmm_')
 
-        #X_likelihood = self.predict_likelihoods(X=X, means=self.gmm_.means_, covariances=self.gmm_.covariances_)
-        X_likelihood = self.gmm_.predict_proba(X=X)
+        X_likelihood = self.predict_likelihoods(X=X, means=self.gmm_.means_, covariances=self.gmm_.covariances_)
+        X_likelihood = sparsemax(X_likelihood)
+#        X_likelihood = self.gmm_.predict_proba(X=X)
         probs = self.logReg_.predict_proba(X_likelihood)
 
         return probs
@@ -303,8 +330,10 @@ class RadialBasisFunctionNetwork(BaseEstimator, ClassifierMixin):
         # Check is fit had been called
         check_is_fitted(self, 'gmm_')
 
-        X_likelihood = self.gmm_.predict_proba(X=X)
-        y = self.logReg_.predict(X_likelihood)
+        X_likelihood = self.predict_likelihoods(X=X, means=self.gmm_.means_, covariances=self.gmm_.covariances_)
+        X_pred = sparsemax(X_likelihood)
+#        X_likelihood = self.gmm_.predict_proba(X=X)
+        y = self.logReg_.predict(X_pred)
 
         return y
 
@@ -446,15 +475,58 @@ if __name__ == '__main__':
         plot_decision_regions(X_train, X_test, y_train, y_test, rbfn, resolution=0.1)
         pass
 
+
+    def test_logReg_2classes():
+
+        # Import first two features from iris data set and first two classes
+        iris = datasets.load_iris()
+        X = iris.data[iris.target != 2, :2]
+        y = iris.target[iris.target != 2]
+
+        # Divide in train and test
+        X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.3, random_state=7331)
+
+        # Create and fit the Logistic Regression to
+        logReg = LogisticRegression(penalty="l2", C=100, fit_intercept=True, random_state=None, solver="newton-cg",
+                                    max_iter=1000, multi_class="multinomial")
+        logReg.fit(X_train, y_train)
+
+        # Plot train and test data
+        plt.figure()
+        ax = plt.gca()
+        colors = ('red', 'blue', 'lightgreen', 'gray', 'cyan')
+        cmap = ListedColormap(colors[:len(np.unique(y_train))])
+        for idx, cl in enumerate(np.sort(np.unique(y_train))):  # plot train samples
+            plt.scatter(X_train[y_train == cl, 0], X_train[y_train == cl, 1], color=cmap(idx), marker='*')
+        for idx, cl in enumerate(np.sort(np.unique(y_test))):  # plot test samples
+            plt.scatter(X_test[y_test == cl, 0], X_test[y_test == cl, 1], color=cmap(idx), marker='x')
+        # Plot decision boundaries
+        weights = logReg.coef_
+        bias = logReg.intercept_
+        x_min, x_max = min(X_train[:, 0]), max(X_train[:, 0])
+        y_min, y_max = -(bias + weights[0, 0] * x_min) / weights[0, 1], -(bias + weights[0, 0] * x_max) / weights[0, 1]
+        plt.plot([x_min, x_max], [y_min, y_max])
+
+        plt.tight_layout()
+        plt.show()
+
+        # Make predictions
+        y_pred_prob = logReg.predict_proba(X_test)
+        y_pred = logReg.predict(X_test)
+        accuracy = accuracy_score(y_test, y_pred)
+        print(accuracy)
+        pass
+
     def mnist():
+        np.random.seed(1)
         digits = datasets.load_digits()
         X = digits.data
         y = digits.target
         # Divide in train and test
-        X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=1)
+        X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.3, random_state=1)
 
         # Create and fit the Logistic Regression to
-        rbfn = RadialBasisFunctionNetwork(link=0, random_state=None, n_iter=300, n_components=10, covariance_type="full",
+        rbfn = RadialBasisFunctionNetwork(link=0, random_state=None, n_iter=100, n_components=10, covariance_type="full",
                                           tol_gmm=1e-3,
                                           reg_covar=1e-06, max_iter_gmm=1, init_params="kmeans", penalty="l2",
                                           tol_logreg=1e-4, C=100,
@@ -470,3 +542,4 @@ if __name__ == '__main__':
         pass
 
     mnist()
+    #test_logReg_2classes()
