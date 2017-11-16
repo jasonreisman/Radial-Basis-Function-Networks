@@ -13,8 +13,9 @@ from mixtures.gmm import GaussianMixture
 #from sklearn.mixture import GaussianMixture
 
 
-def forward(z):
-    """forward pass for sparsemax
+def simplex_proj(z):
+    """Projectets rows of z in the simplex.
+
     this will process a 2d-array $z$, where axis 1 (each row) is assumed to be
     the the z-vector.
     """
@@ -50,7 +51,7 @@ class RadialBasisFunctionNetwork(BaseEstimator, ClassifierMixin):
 
     Parameters
     ----------
-    link : integer
+    link : integer, default 0
         Proportion of log reg weights used for the mixture weights.
         0 : no log reg weights.
         1 : only log reg weights
@@ -58,14 +59,24 @@ class RadialBasisFunctionNetwork(BaseEstimator, ClassifierMixin):
         Number of iterations performed in method fit.
 
     (for the Gaussian Mixture Models)
-    n_mixtures : int, defaults to 2.
+    n_components : int, defaults to 2.
         The number of mixture components.
+    feature_type : string, default to 'likelihoods'
+        Must be one of:
+            'likelihood' (design matrix passed to the Logistic Regression
+                are the likelihoods of the samples of each mixture),
+            'log_likelihood' (design matrix passed to the Logistic Regression
+                are the log likelihoods of the samples of each mixture),
+            'proj_log_likelihood' (design matrix passed to the Logistic Regression
+                are the log likelihoods of the samples of each mixture projected on the simplex),
+            'post_prob' (design matrix passed to the Logistic Regression
+                are the component probabilities of the samples of each mixture),
     covariance_type : {'full', 'diag'},
             defaults to 'full'.
         String describing the type of covariance parameters to use.
         Must be one of::
             'full' (each component has its own general covariance matrix),
-            'diag' (each component has its own diagonal covariance matrix),
+            'diag' (each component has its own diagonal covariance matrix)
     reg_covar : float, defaults to 1e-6.
         Non-negative regularization added to the diagonal of covariance.
         Allows to assure that the covariance matrices are all positive definite.
@@ -77,10 +88,10 @@ class RadialBasisFunctionNetwork(BaseEstimator, ClassifierMixin):
         Must be one of::
             'kmeans' : responsibilities are initialized using kmeans.
             'random' : responsibilities are initialized randomly.
-    weights_init : array-like, shape (n_mixtures, ), optional
+    weights_init : array-like, shape (n_components, ), optional
         The user-provided initial weights, defaults to None.
         If it None, weights are initialized using the `init_params` method.
-    means_init : array-like, shape (n_mixtures, n_features), optional
+    means_init : array-like, shape (n_components, n_features), optional
         The user-provided initial means, defaults to None,
         If it None, means are initialized using the `init_params` method.
     random_state : int, RandomState instance or None, optional (default=None)
@@ -106,11 +117,12 @@ class RadialBasisFunctionNetwork(BaseEstimator, ClassifierMixin):
     """
 
 
-    def __init__(self, link=True, n_iter=100, n_mixtures=5, covariance_type='full', reg_covar=1e-6, n_iter_gmm=1,
+    def __init__(self, link=0, n_iter=100, n_components=5, feature_type='likelihood', covariance_type='full', reg_covar=1e-6, n_iter_gmm=1,
                  init_params='kmeans', weights_init=None, means_init=None, random_state=None, l=0.01, n_iter_logreg=1):
         self.link = link
         self.n_iter = n_iter
-        self.n_mixtures = n_mixtures
+        self.n_components = n_components
+        self.feature_type = feature_type
         self.covariance_type = covariance_type
         self.reg_covar = reg_covar
         self.n_iter_gmm = n_iter_gmm
@@ -159,31 +171,34 @@ class RadialBasisFunctionNetwork(BaseEstimator, ClassifierMixin):
         self.X_ = X
         self.y_ = y
 
-        self.gmm_ = GaussianMixture(n_mixtures=self.n_mixtures, covariance_type=self.covariance_type,
+        self.gmm_ = GaussianMixture(n_components=self.n_components, covariance_type=self.covariance_type,
                                     reg_covar=self.reg_covar, n_iter=self.n_iter_gmm, init_params=self.init_params,
                                     weights_init=self.weights_init, means_init=self.means_init,
                                     random_state=self.random_state, warm_start=True)
         self.logReg_ = LogisticRegression(l=self.l, n_iter=self.n_iter_logreg, warm_start=True)
 
-        gmm_weights = np.ones(self.n_mixtures) / self.n_mixtures
+        gmm_weights = np.ones(self.n_components) / self.n_components
         for i in range(self.n_iter):
 
-            if True:
-                self.gmm_ = self.gmm_.fit(X=self.X_, weights=gmm_weights)
+            if self.feature_type == 'post_prob':
+                self.gmm_ = self.gmm_.fit(X=self.X_, prior_weights=gmm_weights)
                 design_matrix = self.gmm_.resp_
                 self.logReg_ = self.logReg_.fit(design_matrix, self.y_)
 
-            if False:
-                self.gmm_ = self.gmm_.fit(X=self.X_, weights=gmm_weights)
-#                design_matrix = self.predict_likelihoods(X, self.gmm_.means_, self.gmm_.covariances_)
-                design_matrix = np.log(self.predict_likelihoods(X, self.gmm_.means_, self.gmm_.covariances_) + np.finfo(np.float64).eps)
+            if self.feature_type == 'likelihood':
+                self.gmm_ = self.gmm_.fit(X=self.X_, prior_weights=gmm_weights)
+                design_matrix = self.predict_likelihoods(X, self.gmm_.means_, self.gmm_.covariances_, type='norm')
                 self.logReg_ = self.logReg_.fit(design_matrix, self.y_)
 
-            if False:
-                self.gmm_ = self.gmm_.fit(X=self.X_, weights=gmm_weights)
-#                likelihoods = self.predict_likelihoods(X, self.gmm_.means_, self.gmm_.covariances_)
-                likelihoods = np.log(self.predict_likelihoods(X, self.gmm_.means_, self.gmm_.covariances_) + np.finfo(np.float64).eps)
-                design_matrix = forward(likelihoods)
+            if self.feature_type == 'log_likelihood':
+                self.gmm_ = self.gmm_.fit(X=self.X_, prior_weights=gmm_weights)
+                design_matrix = self.predict_likelihoods(X, self.gmm_.means_, self.gmm_.covariances_, type='log')
+                self.logReg_ = self.logReg_.fit(design_matrix, self.y_)
+
+            if self.feature_type == 'proj_log_likelihood':
+                self.gmm_ = self.gmm_.fit(X=self.X_, prior_weights=gmm_weights)
+                likelihoods = self.predict_likelihoods(X, self.gmm_.means_, self.gmm_.covariances_, type='log')
+                design_matrix = simplex_proj(likelihoods)
                 self.logReg_ = self.logReg_.fit(design_matrix, self.y_)
 
             logReg_weights = self.logReg_.get_weights()
@@ -193,7 +208,7 @@ class RadialBasisFunctionNetwork(BaseEstimator, ClassifierMixin):
         # Return the classifier
         return self
 
-    def predict_likelihoods(self, X, means, covariances):
+    def predict_likelihoods(self, X, means, covariances, type='norm'):
         """ Predict likelihood of each sample given the mixtures.
 
         Parameters
@@ -208,12 +223,19 @@ class RadialBasisFunctionNetwork(BaseEstimator, ClassifierMixin):
             (n_features, n_features)               if 'tied',
             (n_components, n_features)             if 'diag',
             (n_components, n_features, n_features) if 'full'
+        type : string, defaults to 'norm'
+            'norm' (normal likelihoods)
+            'log' (log likelihoods)
 
         Returns
         -------
-        post_probs : array-like of shape = [n_samples, n_mixtures]
+        post_probs : array-like of shape = [n_samples, n_components]
             Matrix containing the likelihoods for each gaussian in the mixture.
         """
+
+        # Check type parameter
+        if type not in ['norm', 'log']:
+            raise ValueError("link must be a string contained in ['norm', 'log']. Valor passed: %s" % type)
 
         # Check is fit had been called
         check_is_fitted(self, 'gmm_')
@@ -225,24 +247,30 @@ class RadialBasisFunctionNetwork(BaseEstimator, ClassifierMixin):
 
         for i in range(means.shape[0]):
             try:
-                post_probs[:, i] = multivariate_normal.pdf(X, mean=means[i, :], cov=covariances[i, :, :])
+                if type == 'norm':
+                    post_probs[:, i] = multivariate_normal.pdf(X, mean=means[i, :], cov=covariances[i, :, :])
+                elif type == 'log':
+                    post_probs[:, i] = multivariate_normal.logpdf(X, mean=means[i, :], cov=covariances[i, :, :])
             except np.linalg.LinAlgError as err:
                 if 'singular matrix' in str(err):
                     cov = covariances[i, :, :] + np.eye(covariances[i, :, :].shape[0]) * self.reg_covar  # Add regularization to matrix
-                    post_probs[:, i] = multivariate_normal.pdf(X, mean=means[i, :], cov=cov)
+                    if type == 'norm':
+                        post_probs[:, i] = multivariate_normal.pdf(X, mean=means[i, :], cov=cov)
+                    elif type == 'log':
+                        post_probs[:, i] = multivariate_normal.logpdf(X, mean=means[i, :], cov=cov)
                 else:
                     raise
 
-        return post_probs #np.log(post_probs + np.finfo(np.float64).eps)
+        return post_probs
 
     def get_mixtures(self):
         """Returns the centers and co-variance matrices of the GMM.
 
         Returns
         -------
-        centers : array, shape (n_mixtures,)
+        centers : array, shape (n_components,)
             Centers of the GMM.
-        cov_matrices : array-type, shape (.n_mixtures, n_features, n_features)
+        cov_matrices : array-type, shape (.n_components, n_features, n_features)
             Co-variance matrices of the GMM.
         """
 
@@ -274,10 +302,24 @@ class RadialBasisFunctionNetwork(BaseEstimator, ClassifierMixin):
         # Check is fit had been called
         check_is_fitted(self, 'gmm_')
 
-        gmm_probs = self.gmm_.predict_proba(X)
-        probs = self.logReg_.predict_proba(gmm_probs)
+        if self.feature_type == 'post_prob':
+            gmm_probs = self.gmm_.predict_proba(X)
+            probs = self.logReg_.predict_proba(gmm_probs)
 
-        return probs
+        if self.feature_type == 'likelihood':
+            gmm_like = self.predict_likelihoods(X, self.gmm_.means_, self.gmm_.covariances_, type='norm')
+            probs = self.logReg_.predict_proba(gmm_like)
+
+        if self.feature_type == 'log_likelihood':
+            gmm_like = self.predict_likelihoods(X, self.gmm_.means_, self.gmm_.covariances_, type='log')
+            probs = self.logReg_.predict_proba(gmm_like)
+
+        if self.feature_type == 'proj_log_likelihood':
+            likelihoods = self.predict_likelihoods(X, self.gmm_.means_, self.gmm_.covariances_, type='log')
+            likelihoods_proj = simplex_proj(likelihoods)
+            probs = self.logReg_.predict_proba(likelihoods_proj)
+
+        return probs    
 
     def predict(self, X):
         """ Predict the classes each sample belongs to.
@@ -299,17 +341,22 @@ class RadialBasisFunctionNetwork(BaseEstimator, ClassifierMixin):
         # Check is fit had been called
         check_is_fitted(self, 'gmm_')
 
+        if self.feature_type == 'post_prob':
+            gmm_probs = self.gmm_.predict_proba(X)
+            y = self.logReg_.predict(gmm_probs)
 
-        gmm_probs = self.gmm_.predict_proba(X)
-        y = self.logReg_.predict(gmm_probs)
+        if self.feature_type == 'likelihood':
+            gmm_like = self.predict_likelihoods(X, self.gmm_.means_, self.gmm_.covariances_, type='norm')
+            y = self.logReg_.predict(gmm_like)
 
-#        gmm_like = np.log(self.predict_likelihoods(X, self.gmm_.means_, self.gmm_.covariances_) + np.finfo(np.float64).eps)
-#        y = self.logReg_.predict(gmm_like)
+        if self.feature_type == 'log_likelihood':
+            gmm_like = self.predict_likelihoods(X, self.gmm_.means_, self.gmm_.covariances_, type='log')
+            y = self.logReg_.predict(gmm_like)
 
-#        likelihoods = self.predict_likelihoods(X, self.gmm_.means_, self.gmm_.covariances_)
-#        likelihoods = np.log(self.predict_likelihoods(X, self.gmm_.means_, self.gmm_.covariances_) + np.finfo(np.float64).eps)
-#        likelihoods_proj = forward(likelihoods)
-#        y = self.logReg_.predict(likelihoods_proj)
+        if self.feature_type == 'proj_log_likelihood':
+            likelihoods = self.predict_likelihoods(X, self.gmm_.means_, self.gmm_.covariances_, type='log')
+            likelihoods_proj = simplex_proj(likelihoods)
+            y = self.logReg_.predict(likelihoods_proj)
 
         return y
 
@@ -358,7 +405,7 @@ if __name__ == '__main__':
         X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.3)
 
         # Create and fit the Logistic Regression
-        rbfn = RadialBasisFunctionNetwork(link=0, n_iter=100, n_mixtures=10, covariance_type='full', reg_covar=1e-6,
+        rbfn = RadialBasisFunctionNetwork(link=0, n_iter=100, n_components=10, covariance_type='full', feature_type='post_prob', reg_covar=1e-6,
                                           n_iter_gmm=1, init_params='kmeans', weights_init=None, means_init=None,
                                           random_state=None, l=0.01, n_iter_logreg=1)
         rbfn.fit(X_train, y_train)
