@@ -9,6 +9,16 @@ from matplotlib.patches import Ellipse
 from classifiers.rbfn import RadialBasisFunctionNetwork
 from classifiers.logisitc_regression import LogisticRegression
 from mixtures.gmm import GaussianMixture
+from sklearn.metrics import log_loss
+
+def log_reg_log_loss(y_true, y_pred, C, coef, intercept=np.array([0])):
+
+    loss = log_loss(y_true, y_pred)
+    loss = loss + (1 / (2 * C)) * (np.sum(np.square(intercept)) + np.sum(np.square(coef)))
+
+    return loss
+
+
 
 # returns an Ellipse object when given a center and covariance matrix
 def get_ellipse(mean, cov):
@@ -289,7 +299,7 @@ def test_rbfn():
     pass
 
 def mnist():
-    np.random.seed(1)
+    #np.random.seed(1)
     digits = datasets.load_digits()
     X = digits.data
     y = digits.target
@@ -297,9 +307,9 @@ def mnist():
     X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.3, random_state=1)
 
     # Create and fit the Logistic Regression
-    rbfn = RadialBasisFunctionNetwork(link=0, n_iter=100, n_mixtures=10, covariance_type='full', reg_covar=1e-6,
-                                      n_iter_gmm=1, init_params='kmeans', weights_init=None, means_init=None,
-                                      random_state=None, l=0.01, n_iter_logreg=1)
+    rbfn = RadialBasisFunctionNetwork(link=0, n_iter=100, n_components=10, covariance_type='full',
+                                      feature_type='post_prob', reg_covar=1e-6, n_iter_gmm=1, init_params='kmeans',
+                                      weights_init=None, means_init=None, random_state=None, l=0.01, n_iter_logreg=1)
     rbfn.fit(X_train, y_train)
 
     # Make predictions
@@ -307,6 +317,74 @@ def mnist():
     y_pred = rbfn.predict(X_test)
     accuracy = accuracy_score(y_test, y_pred)
     print(accuracy)
+
+#    log_loss = log_reg_log_loss(y, rbfn.predict_proba(X), 1.0/rbfn.l, rbfn.logReg_.weights_)
+    log_loss = log_reg_log_loss(y, rbfn.predict_proba(X), 1.0/rbfn.l, rbfn.logReg_.coef_, rbfn.logReg_.intercept_)
+
+    pass
+
+def wine():
+    #np.random.seed(1)
+    wine = datasets.load_wine()
+    X = wine.data
+    y = wine.target
+    # Divide in train and test
+    X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.3, random_state=1)
+
+    # Create and fit the Logistic Regression
+    rbfn = RadialBasisFunctionNetwork(link=0, n_iter=500, n_components=3, covariance_type='full',
+                                      feature_type='post_prob', reg_covar=1e-5, n_iter_gmm=1, init_params='kmeans',
+                                      weights_init=None, means_init=None, random_state=None, l=1, n_iter_logreg=1)
+    rbfn.fit(X_train, y_train)
+
+    # Make predictions
+    y_pred_prob = rbfn.predict_proba(X_test)
+    y_pred = rbfn.predict(X_test)
+    accuracy = accuracy_score(y_test, y_pred)
+    print(accuracy)
+    pass
+
+def cancer():
+    #np.random.seed(1)
+    cancer = datasets.load_breast_cancer()
+    X = cancer.data
+    y = cancer.target
+    # Divide in train and test
+    X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.3, random_state=1)
+
+    # Create and fit the Logistic Regression
+    rbfn = RadialBasisFunctionNetwork(link=0, n_iter=500, n_components=2, covariance_type='full',
+                                      feature_type='post_prob', reg_covar=1e-3, n_iter_gmm=1, init_params='kmeans',
+                                      weights_init=None, means_init=None, random_state=None, l=1, n_iter_logreg=1)
+    rbfn.fit(X_train, y_train)
+
+    # Make predictions
+    y_pred_prob = rbfn.predict_proba(X_test)
+    y_pred = rbfn.predict(X_test)
+    accuracy = accuracy_score(y_test, y_pred)
+    print(accuracy)
+    pass
+
+def iris():
+    #np.random.seed(1)
+    iris = datasets.load_iris()
+    X = iris.data
+    y = iris.target
+    # Divide in train and test
+    X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.3, random_state=1)
+
+    # Create and fit the Logistic Regression
+    rbfn = RadialBasisFunctionNetwork(link=0, n_iter=100, n_components=5, covariance_type='full',
+                                      feature_type='post_prob', reg_covar=1e-3, n_iter_gmm=1, init_params='kmeans',
+                                      weights_init=None, means_init=None, random_state=None, l=0.01, n_iter_logreg=1)
+    rbfn.fit(X_train, y_train)
+
+    # Make predictions
+    y_pred_prob = rbfn.predict_proba(X_test)
+    y_pred = rbfn.predict(X_test)
+    accuracy = accuracy_score(y_test, y_pred)
+    print(accuracy)
+
     pass
 
 
@@ -324,6 +402,9 @@ if __name__ == '__main__':
     #test_gmm()
     #test_gmm_D()
     #test_rbfn()
-    mnist()
+    #mnist()
+    #wine()
+    #cancer()
+    iris()
 
     pass

@@ -7,8 +7,8 @@ from sklearn.utils.validation import check_X_y, check_array, check_is_fitted
 from sklearn.utils.multiclass import unique_labels
 from scipy.stats import multivariate_normal
 
-from classifiers.logisitc_regression import LogisticRegression
-#from sklearn.linear_model import LogisticRegression
+#from classifiers.logisitc_regression import LogisticRegression
+from sklearn.linear_model import LogisticRegression
 from mixtures.gmm import GaussianMixture
 #from sklearn.mixture import GaussianMixture
 
@@ -168,6 +168,11 @@ class RadialBasisFunctionNetwork(BaseEstimator, ClassifierMixin):
                              " in the data, but the data contains only one"
                              " class: %r" % self.classes_[0])
 
+        # Check type parameter
+        if self.feature_type not in ['likelihood', 'log_likelihood', 'proj_log_likelihood', 'post_prob']:
+            raise ValueError("feature_type must be a string contained in ['likelihood', 'log_likelihood', "
+                             "'proj_log_likelihood', 'post_prob']. Valor passed: %s" % self.feature_type)
+
         self.X_ = X
         self.y_ = y
 
@@ -175,36 +180,37 @@ class RadialBasisFunctionNetwork(BaseEstimator, ClassifierMixin):
                                     reg_covar=self.reg_covar, n_iter=self.n_iter_gmm, init_params=self.init_params,
                                     weights_init=self.weights_init, means_init=self.means_init,
                                     random_state=self.random_state, warm_start=True)
-        self.logReg_ = LogisticRegression(l=self.l, n_iter=self.n_iter_logreg, warm_start=True)
 
-        gmm_weights = np.ones(self.n_components) / self.n_components
+        self.logReg_ = LogisticRegression(penalty='l2',  tol=1e-10, C=1.0/self.l, solver='sag',
+                                          max_iter=self.n_iter_logreg, multi_class='multinomial', warm_start=True)
+
+        priors = None
         for i in range(self.n_iter):
 
             if self.feature_type == 'post_prob':
-                self.gmm_ = self.gmm_.fit(X=self.X_, prior_weights=gmm_weights)
+                self.gmm_ = self.gmm_.fit(X=self.X_, prior_weights=priors)
                 design_matrix = self.gmm_.resp_
                 self.logReg_ = self.logReg_.fit(design_matrix, self.y_)
 
             if self.feature_type == 'likelihood':
-                self.gmm_ = self.gmm_.fit(X=self.X_, prior_weights=gmm_weights)
+                self.gmm_ = self.gmm_.fit(X=self.X_, prior_weights=priors)
                 design_matrix = self.predict_likelihoods(X, self.gmm_.means_, self.gmm_.covariances_, type='norm')
                 self.logReg_ = self.logReg_.fit(design_matrix, self.y_)
 
             if self.feature_type == 'log_likelihood':
-                self.gmm_ = self.gmm_.fit(X=self.X_, prior_weights=gmm_weights)
+                self.gmm_ = self.gmm_.fit(X=self.X_, prior_weights=priors)
                 design_matrix = self.predict_likelihoods(X, self.gmm_.means_, self.gmm_.covariances_, type='log')
                 self.logReg_ = self.logReg_.fit(design_matrix, self.y_)
 
             if self.feature_type == 'proj_log_likelihood':
-                self.gmm_ = self.gmm_.fit(X=self.X_, prior_weights=gmm_weights)
+                self.gmm_ = self.gmm_.fit(X=self.X_, prior_weights=priors)
                 likelihoods = self.predict_likelihoods(X, self.gmm_.means_, self.gmm_.covariances_, type='log')
                 design_matrix = simplex_proj(likelihoods)
                 self.logReg_ = self.logReg_.fit(design_matrix, self.y_)
 
-            logReg_weights = self.logReg_.get_weights()
+#            logReg_weights = self.logReg_.get_weights()
             gmm_weights = self.gmm_.weights_
-            gmm_weights = self.calculate_gmm_weights(logReg_weights[1:, :], gmm_weights)
-
+            priors = None
         # Return the classifier
         return self
 
@@ -319,7 +325,7 @@ class RadialBasisFunctionNetwork(BaseEstimator, ClassifierMixin):
             likelihoods_proj = simplex_proj(likelihoods)
             probs = self.logReg_.predict_proba(likelihoods_proj)
 
-        return probs    
+        return probs
 
     def predict(self, X):
         """ Predict the classes each sample belongs to.

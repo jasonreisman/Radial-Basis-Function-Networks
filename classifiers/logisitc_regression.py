@@ -1,13 +1,14 @@
 import numbers
 
 import numpy as np
+from scipy.misc import logsumexp
 from sklearn.base import BaseEstimator, ClassifierMixin
 from sklearn.utils.validation import check_X_y, check_array, check_is_fitted
 from sklearn.utils.multiclass import unique_labels
 from utils.one_hot_encoder import OneHotEncoder
 
-def logistic(X):
-    """Calculates the logistic of each row of X.
+def softmax(X):
+    """Calculates the softmax of each row of X.
 
     Parameters
     ----------
@@ -19,7 +20,7 @@ def logistic(X):
         Logistic of X.
     """
 
-    exp_X = np.exp(X + np.finfo(float).eps)
+    exp_X = np.exp(X - np.max(X, axis=1).reshape(-1,1))
     return exp_X / (np.sum(exp_X, axis=1)).reshape((X.shape[0], 1))
 
 class LogisticRegression(BaseEstimator, ClassifierMixin):
@@ -106,7 +107,7 @@ class LogisticRegression(BaseEstimator, ClassifierMixin):
         if (self.warm_start is False) or (hasattr(self, 'weights_') is False):
 
             # shape (n_classes * n_features). Saves the feature weights for each class.
-            self.weights_ = np.ones(self.n_classes_ * self.X_.shape[1]) * np.finfo(float).eps
+            self.weights_ = np.ones(self.n_classes_ * self.X_.shape[1]) * np.finfo(np.float64).eps
 
         # Start of bound optimization algorithm
 
@@ -118,11 +119,18 @@ class LogisticRegression(BaseEstimator, ClassifierMixin):
 
         # denom : array-like, shape ((n_classes-1)*n_features, (n_classes-1)*n_features)
         #    Left side of the weight update step.
-        denom = np.linalg.inv(B - self.l * np.eye(B.shape[0], B.shape[1]))
+
+#        denom = np.linalg.inv(B - self.l * np.eye(B.shape[0], B.shape[1]))
+        B_reg = np.copy(B).astype(np.longdouble)
+        reg = np.log(self.l).astype(np.longdouble)
+        for i in range(B_reg.shape[0]):
+            aux = [reg, np.log(-B[i, i]).astype(np.longdouble)]
+            lse = logsumexp(aux)
+            B_reg[i, i] = -np.exp(lse)
+        denom = np.linalg.inv(B_reg.astype(np.float64))
 
         for i in range(self.n_iter):
-
-            p = logistic(np.dot(self.X_, self.weights_.reshape(self.X_.shape[1], self.n_classes_, order='F')))
+            p = softmax(np.dot(self.X_, self.weights_.reshape(self.X_.shape[1], self.n_classes_, order='F')))
             dif = y_1hot - p
             g = np.zeros((self.n_classes_) * self.X_.shape[1])
             for j in range(self.X_.shape[0]):  # (to be improved)
@@ -172,7 +180,7 @@ class LogisticRegression(BaseEstimator, ClassifierMixin):
         X = np.hstack([ones, X])
 
         # Calculate probabilities
-        probs = logistic(np.dot(X, weights))
+        probs = softmax(np.dot(X, weights))
 
         return probs
 
