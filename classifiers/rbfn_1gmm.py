@@ -7,7 +7,7 @@ from sklearn.utils.validation import check_X_y, check_array, check_is_fitted
 from sklearn.utils.multiclass import unique_labels
 from scipy.stats import multivariate_normal
 
-from classifiers.mult_log_reg_per_class import LogisticRegressionperClass
+#from classifiers.logisitc_regression import LogisticRegression
 from sklearn.linear_model import LogisticRegression
 from mixtures.gmm import GaussianMixture
 #from sklearn.mixture import GaussianMixture
@@ -52,9 +52,9 @@ class RadialBasisFunctionNetwork(BaseEstimator, ClassifierMixin):
     Parameters
     ----------
     link : integer, default 0
-        Scales the Dirichlet priors created from the log reg weights.
-        0 : no prior.
-        (>>1) : basically only prior used.
+        Proportion of log reg weights used for the mixture weights.
+        0 : no log reg weights.
+        1 : only log reg weights
     n_iter : int, defaults to 100
         Number of iterations performed in method fit.
 
@@ -159,8 +159,8 @@ class RadialBasisFunctionNetwork(BaseEstimator, ClassifierMixin):
         self.n_classes_ = self.classes_.size
 
         # Check link parameter
-        if not isinstance(self.link, numbers.Number) or self.link < 0:
-            raise ValueError("link must be a number in the interval [0, inf]. Valor passed: %r" % self.link)
+        if not isinstance(self.link, numbers.Number) or self.link < 0 or self.link > 1:
+            raise ValueError("link must be a number in the interval [0,1]. Valor passed: %r" % self.link)
 
         # Check if there are at least 2 classes
         if self.n_classes_ < 2:
@@ -176,52 +176,41 @@ class RadialBasisFunctionNetwork(BaseEstimator, ClassifierMixin):
         self.X_ = X
         self.y_ = y
 
-        self.gmm_ = []
-        for i in range(self.n_classes_):
-            self.gmm_.append(GaussianMixture(n_components=self.n_components, covariance_type=self.covariance_type,
+        self.gmm_ = GaussianMixture(n_components=self.n_components, covariance_type=self.covariance_type,
                                     reg_covar=self.reg_covar, n_iter=self.n_iter_gmm, init_params=self.init_params,
                                     weights_init=self.weights_init, means_init=self.means_init,
-                                    random_state=self.random_state, warm_start=True))
+                                    random_state=self.random_state, warm_start=True)
 
+        self.logReg_ = LogisticRegression(penalty='l2',  tol=1e-10, C=1.0/self.l, solver='sag',
+                                          max_iter=self.n_iter_logreg, multi_class='multinomial', warm_start=True)
 
-#        self.logReg_ = LogisticRegression(penalty='l2',  tol=1e-10, C=1.0/self.l, solver='sag',
-#                                          max_iter=self.n_iter_logreg, multi_class='multinomial', warm_start=True)
-        self.logReg_ = LogisticRegressionperClass(l=self.l, n_iter=self.n_iter_logreg, warm_start=True)
-
-
-        # design_matrix with shape (n_samples, number of total components in all the gmms), there are n_classes mixtures
-        design_matrix = np.zeros((self.X_.shape[0], self.n_classes_ * self.n_components))
-        priors = np.ones((self.n_classes_, self.n_components))
-        for j in range(self.n_iter):
+        priors = None
+        for i in range(self.n_iter):
 
             if self.feature_type == 'post_prob':
-                for i in range(self.n_classes_):
-                    self.gmm_[i] = self.gmm_[i].fit(X=self.X_, prior_weights=priors[i, :])
-                    design_matrix[:, i * self.n_components: (i + 1) * self.n_components] = self.gmm_[i].resp_
+                self.gmm_ = self.gmm_.fit(X=self.X_, prior_weights=priors)
+                design_matrix = self.gmm_.resp_
+                self.logReg_ = self.logReg_.fit(design_matrix, self.y_)
 
-            elif self.feature_type == 'likelihood':
-                for i in range(self.n_classes_):
-                    self.gmm_[i] = self.gmm_[i].fit(X=self.X_, prior_weights=priors[i, :])
-                    design_matrix[:, i * self.n_components: (i + 1) * self.n_components] = \
-                        self.predict_likelihoods(X, self.gmm_[i].means_, self.gmm_[i].covariances_, type='norm')
+            if self.feature_type == 'likelihood':
+                self.gmm_ = self.gmm_.fit(X=self.X_, prior_weights=priors)
+                design_matrix = self.predict_likelihoods(X, self.gmm_.means_, self.gmm_.covariances_, type='norm')
+                self.logReg_ = self.logReg_.fit(design_matrix, self.y_)
 
-            elif self.feature_type == 'log_likelihood':
-                for i in range(self.n_classes_):
-                    self.gmm_[i] = self.gmm_[i].fit(X=self.X_, prior_weights=priors[i, :])
-                    design_matrix[:, i * self.n_components: (i + 1) * self.n_components] = \
-                        self.predict_likelihoods(X, self.gmm_[i].means_, self.gmm_[i].covariances_, type='log')
+            if self.feature_type == 'log_likelihood':
+                self.gmm_ = self.gmm_.fit(X=self.X_, prior_weights=priors)
+                design_matrix = self.predict_likelihoods(X, self.gmm_.means_, self.gmm_.covariances_, type='log')
+                self.logReg_ = self.logReg_.fit(design_matrix, self.y_)
 
-            elif self.feature_type == 'proj_log_likelihood':
-                for i in range(self.n_classes_):
-                    self.gmm_[i] = self.gmm_[i].fit(X=self.X_, prior_weights=priors[i, :])
-                    likelihoods = self.predict_likelihoods(X, self.gmm_[i].means_, self.gmm_[i].covariances_, type='log')
-                    design_matrix[:, i * self.n_components: (i + 1) * self.n_components] = simplex_proj(likelihoods)
+            if self.feature_type == 'proj_log_likelihood':
+                self.gmm_ = self.gmm_.fit(X=self.X_, prior_weights=priors)
+                likelihoods = self.predict_likelihoods(X, self.gmm_.means_, self.gmm_.covariances_, type='log')
+                design_matrix = simplex_proj(likelihoods)
+                self.logReg_ = self.logReg_.fit(design_matrix, self.y_)
 
-            self.logReg_ = self.logReg_.fit(design_matrix, self.y_)
-
-            if self.link != 0:
-                priors = self.calculate_priors(self.logReg_.weights_)
-
+#            logReg_weights = self.logReg_.get_weights()
+            gmm_weights = self.gmm_.weights_
+            priors = None
         # Return the classifier
         return self
 
@@ -319,27 +308,23 @@ class RadialBasisFunctionNetwork(BaseEstimator, ClassifierMixin):
         # Check is fit had been called
         check_is_fitted(self, 'gmm_')
 
-        design_matrix = np.zeros((X.shape[0], self.n_classes_ * self.n_components))
         if self.feature_type == 'post_prob':
-            for i in range(self.n_classes_):
-                design_matrix[:, i * self.n_components: (i + 1) * self.n_components] = self.gmm_[i].predict_proba(X)
+            gmm_probs = self.gmm_.predict_proba(X)
+            probs = self.logReg_.predict_proba(gmm_probs)
 
         if self.feature_type == 'likelihood':
-            for i in range(self.n_classes_):
-                design_matrix[:, i * self.n_components: (i + 1) * self.n_components] = \
-                    self.predict_likelihoods(X, self.gmm_[i].means_, self.gmm_[i].covariances_, type='norm')
+            gmm_like = self.predict_likelihoods(X, self.gmm_.means_, self.gmm_.covariances_, type='norm')
+            probs = self.logReg_.predict_proba(gmm_like)
 
         if self.feature_type == 'log_likelihood':
-            for i in range(self.n_classes_):
-                design_matrix[:, i * self.n_components: (i + 1) * self.n_components] = \
-                    self.predict_likelihoods(X, self.gmm_[i].means_, self.gmm_[i].covariances_, type='log')
+            gmm_like = self.predict_likelihoods(X, self.gmm_.means_, self.gmm_.covariances_, type='log')
+            probs = self.logReg_.predict_proba(gmm_like)
 
         if self.feature_type == 'proj_log_likelihood':
-            for i in range(self.n_classes_):
-                likelihoods = self.predict_likelihoods(X, self.gmm_[i].means_, self.gmm_[i].covariances_, type='log')
-                design_matrix[:, i * self.n_components: (i + 1) * self.n_components] = simplex_proj(likelihoods)
+            likelihoods = self.predict_likelihoods(X, self.gmm_.means_, self.gmm_.covariances_, type='log')
+            likelihoods_proj = simplex_proj(likelihoods)
+            probs = self.logReg_.predict_proba(likelihoods_proj)
 
-        probs = self.logReg_.predict_proba(design_matrix)
         return probs
 
     def predict(self, X):
@@ -362,55 +347,54 @@ class RadialBasisFunctionNetwork(BaseEstimator, ClassifierMixin):
         # Check is fit had been called
         check_is_fitted(self, 'gmm_')
 
-        design_matrix = np.zeros((X.shape[0], self.n_classes_ * self.n_components))
         if self.feature_type == 'post_prob':
-            for i in range(self.n_classes_):
-                design_matrix[:, i * self.n_components: (i + 1) * self.n_components] = self.gmm_[i].predict_proba(X)
+            gmm_probs = self.gmm_.predict_proba(X)
+            y = self.logReg_.predict(gmm_probs)
 
         if self.feature_type == 'likelihood':
-            for i in range(self.n_classes_):
-                design_matrix[:, i * self.n_components: (i + 1) * self.n_components] = \
-                    self.predict_likelihoods(X, self.gmm_[i].means_, self.gmm_[i].covariances_, type='norm')
+            gmm_like = self.predict_likelihoods(X, self.gmm_.means_, self.gmm_.covariances_, type='norm')
+            y = self.logReg_.predict(gmm_like)
 
         if self.feature_type == 'log_likelihood':
-            for i in range(self.n_classes_):
-                design_matrix[:, i * self.n_components: (i + 1) * self.n_components] = \
-                    self.predict_likelihoods(X, self.gmm_[i].means_, self.gmm_[i].covariances_, type='log')
+            gmm_like = self.predict_likelihoods(X, self.gmm_.means_, self.gmm_.covariances_, type='log')
+            y = self.logReg_.predict(gmm_like)
 
         if self.feature_type == 'proj_log_likelihood':
-            for i in range(self.n_classes_):
-                likelihoods = self.predict_likelihoods(X, self.gmm_[i].means_, self.gmm_[i].covariances_, type='log')
-                design_matrix[:, i * self.n_components: (i + 1) * self.n_components] = simplex_proj(likelihoods)
+            likelihoods = self.predict_likelihoods(X, self.gmm_.means_, self.gmm_.covariances_, type='log')
+            likelihoods_proj = simplex_proj(likelihoods)
+            y = self.logReg_.predict(likelihoods_proj)
 
-        y = self.logReg_.predict(design_matrix)
         return y
 
 
+    def calculate_gmm_weights(self, logReg_weights, gmm_weights):
+        """ Calculates the weights to be passed to the GMM.
 
-    def calculate_priors(self, logReg_weights):
-        """ Calculates the priors to be passed to the GMM.
-
-        The log reg weights are normalized and scales by the link parameter
+        The result is proportional to the parameter link and
+        is based based on the weights of the Log Reg and the degrees
+        of belonging of the points to the mixtures.
 
             Parameters
             ----------
-            logReg_weights :  array, shape (n_features, )
+            logReg_weights :  array, shape (1, n_features) or (n_classes, n_features)
                 Coefficient of the features in the decision function.
+                logReg_weights is of shape (1, n_features) when the given problem is binary.
+            gmm_weights : array-like, shape (n_components,)
+                The weights of each mixture components.
 
             Returns
             -------
-            priors : array, shape (n_classes, n_components)
-                Dirichlet priors for the GMM.
+            gmm_weights : array, shape (n_features, )
+                Weights for the GMM.
             """
 
-        priors = np.ones((self.n_classes_, self.n_components))
+        # Weights based on the log reg weights.
         logReg_weights_abs = np.absolute(logReg_weights)
+        gmm_weights_logReg = np.sum(logReg_weights_abs, axis=1) / np.sum(logReg_weights_abs)
 
-        for i in range(self.n_classes_):
-            prior_temp = logReg_weights_abs[i * int(logReg_weights.size/self.n_classes_): (i+1) * int(logReg_weights.size/self.n_classes_)][1:]
-            priors[i, :] = priors[i, :] + self.link * (prior_temp / np.sum(prior_temp))
+        gmm_weights = (1 - self.link) * gmm_weights + self.link * gmm_weights_logReg
 
-        return priors
+        return gmm_weights
 
 if __name__ == '__main__':
 
@@ -419,7 +403,7 @@ if __name__ == '__main__':
     from sklearn.model_selection import train_test_split
 
     def mnist():
-        np.random.seed(1)
+        #np.random.seed(1)
         digits = datasets.load_digits()
         X = digits.data
         y = digits.target
@@ -427,7 +411,7 @@ if __name__ == '__main__':
         X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.3)
 
         # Create and fit the Logistic Regression
-        rbfn = RadialBasisFunctionNetwork(link=1000, n_iter=100, n_components=10, covariance_type='full', feature_type='post_prob', reg_covar=1e-6,
+        rbfn = RadialBasisFunctionNetwork(link=0, n_iter=100, n_components=10, covariance_type='full', feature_type='post_prob', reg_covar=1e-6,
                                           n_iter_gmm=1, init_params='kmeans', weights_init=None, means_init=None,
                                           random_state=None, l=0.01, n_iter_logreg=1)
         rbfn.fit(X_train, y_train)

@@ -98,7 +98,7 @@ class GaussianMixture(object):
 
         # Check parameters (Incomplete!)
         if (prior_weights is not None) and ((prior_weights.size != self.n_components) or (any(weight <= 0 for weight in prior_weights))):
-            raise ValueError("Vector prior_weights must have lenght equal to n_components and be all positive; got (prior_weights lenght = %r)"
+            raise ValueError("Vector prior_weights must have lenght equal to n_components and be all positive; got (prior_weights = %r)"
                              % prior_weights)
 
         X = check_array(X)
@@ -115,7 +115,7 @@ class GaussianMixture(object):
                 self.means_ = self.means_init
             else:
                 if self.init_params == 'kmeans':
-                    kmeans = KMeans(n_clusters=self.n_components).fit(X)
+                    kmeans = KMeans(n_clusters=self.n_components, random_state=self.random_state).fit(X)
                     self.means_ = kmeans.cluster_centers_
 
                 elif self.init_params == 'random':
@@ -370,17 +370,15 @@ if __name__ == '__main__':
         # create a synthetic data set made of gaussians
         N1 = 500
         N2 = 500
-        N3 = 500
-        X = np.zeros((N1 + N2 + N3, 2))
-        y = np.zeros((N1 + N2 + N3))
+        X = np.zeros((N1 + N2, 2))
+        y = np.zeros((N1 + N2))
         X[:N1, :] = np.random.multivariate_normal(mean=[0, 0], cov=[[7, -3], [-3, 8]], size=N1)
-        X[N1:N1 + N2, :] = np.random.multivariate_normal(mean=[20, 20], cov=[[6, -5], [-5, 5]], size=N2)
-        X[N1 + N2:N1 + N2 + N3, :] = np.random.multivariate_normal(mean=[-20, 20], cov=[[2, 2], [2, 3]], size=N3)
+        X[N1:N1 + N2, :] = np.random.multivariate_normal(mean=[5, 5], cov=[[7, -3], [-3, 8]], size=N2)
 
-        gmm = GaussianMixture(n_components=4, covariance_type='full', reg_covar=1e-6, n_iter=10, init_params='kmeans',
+        gmm = GaussianMixture(n_components=2, covariance_type='full', reg_covar=1e-6, n_iter=10, init_params='kmeans',
                               weights_init=None, means_init=None, random_state=None, warm_start=True)
 
-        gmm.fit(X, prior_weights=np.array([1,1,1,1]))
+        gmm.fit(X, prior_weights=np.array([1,1]))
 
         centers = gmm.means_
         cov_matrices = gmm.covariances_

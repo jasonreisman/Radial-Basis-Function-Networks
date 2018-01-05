@@ -7,27 +7,13 @@ from sklearn.utils.validation import check_X_y, check_array, check_is_fitted
 from sklearn.utils.multiclass import unique_labels
 from utils.one_hot_encoder import OneHotEncoder
 
-def softmax(X):
-    """Calculates the softmax of each row of X.
+class LogisticRegressionperClass(BaseEstimator, ClassifierMixin):
+    """ Multinomial Logistic Regression classifier with specific features for each class.
 
-    Parameters
-    ----------
-    X : array-like, shape (n_samples, n_classes)
-
-    Returns
-    -------
-    y : array-like, shape (n_samples, n_classes)
-        Logistic of X.
-    """
-
-    exp_X = np.exp(X - np.max(X, axis=1).reshape(-1,1))
-    return exp_X / (np.sum(exp_X, axis=1)).reshape((X.shape[0], 1))
-
-class LogisticRegression(BaseEstimator, ClassifierMixin):
-    """ Logistic Regression (aka logit, MaxEnt) classifiers.
-
-    This class implements a l2 regularized logistic regression using a
+    This class implements a l2 regularized multinomial logistic regression using a
     bound optimization solver.
+    This classifier diverges from the classical mult log reg by dividing the dataset by features
+    in the number of classes and uses each group of features only to a parcel of the softmax.
     It was created with the intention to use in the Radial Basis Function Networks package.
     Keep in mind that some features were design with the objective to optimize the usage with
     this package.
@@ -88,16 +74,27 @@ class LogisticRegression(BaseEstimator, ClassifierMixin):
         # Store the number of classes
         self.n_classes_ = self.classes_.size
 
+        X_dim = X.shape[1]
+
         # Check if there are at least 2 classes
         if self.n_classes_ < 2:
             raise ValueError("This solver needs samples of at least 2 classes"
                              " in the data, but the data contains only one"
                              " class: %r" % self.classes_[0])
 
+        # If features_per_class=True but the number of features is not a multiple of the number of classes throw error.
+        if X_dim % self.n_classes_ != 0:
+            raise ValueError("The number of features of X must be a multiple of the number of classes when "
+                             "features_per_class=True;")
 
         # Saves training and target arrays
-        ones = np.ones((X.shape[0], 1))
-        self.X_ = np.hstack([ones, X])  # Ads a first column of 1s (bias feature) to X
+        # Ads n_classes columns of 1s (bias feature) to X
+        self.X_ = np.ones((X.shape[0], 1))
+        for i in range(self.n_classes_):
+            aux = X[:, i * int(X_dim/self.n_classes_): (i+1) * int(X_dim/self.n_classes_)]
+            ones = np.ones((X.shape[0], 1))
+            self.X_ = np.hstack([self.X_, aux, ones])
+        self.X_ = self.X_[:, :-1]
         self.y_ = y
 
         # One hot encodes target
@@ -107,41 +104,62 @@ class LogisticRegression(BaseEstimator, ClassifierMixin):
         # Calculate new weights if warm_start is set to False or the method fit was never ran.
         if (self.warm_start is False) or (hasattr(self, 'weights_') is False):
 
-            # shape (n_classes * n_features). Saves the feature weights for each class.
-            self.weights_ = np.ones(self.n_classes_ * self.X_.shape[1]) * np.finfo(np.float64).eps
-
+            # shape (n_features). Saves the feature weights for each class.
+            self.weights_ = np.ones(self.X_.shape[1]) * np.finfo(np.float64).eps
 
 
         # Start of bound optimization algorithm
 
         # B : array-like, shape (n_classes * n_features, n_classes * n_features)
         #    Negative definite lower bound of the Hessian.
-        B = np.kron(
-            -0.5 * (np.eye(self.n_classes_) - np.ones((self.n_classes_, self.n_classes_)) / self.n_classes_)
-            ,np.dot(self.X_.T, self.X_))
+        B = -0.5 * (1 - 1 / self.n_classes_) * np.dot(self.X_.T, self.X_)
 
         # denom : array-like, shape ((n_classes-1)*n_features, (n_classes-1)*n_features)
         #    Left side of the weight update step.
 
 #        denom = np.linalg.inv(B - self.l * np.eye(B.shape[0], B.shape[1]))
-        B_reg = np.copy(B).astype(np.longdouble)
-        reg = np.log(self.l).astype(np.longdouble)
-        for i in range(B_reg.shape[0]):
-            aux = [reg, np.log(-B[i, i]).astype(np.longdouble)]
+        reg = np.log(self.l)
+        for i in range(B.shape[0]):
+            aux = [reg, np.log(-B[i, i])]
             lse = logsumexp(aux)
-            B_reg[i, i] = -np.exp(lse)
-        denom = np.linalg.inv(B_reg.astype(np.float64))
+            B[i, i] = -np.exp(lse)
+        denom = np.linalg.inv(B)
 
         for i in range(self.n_iter):
-            p = softmax(np.dot(self.X_, self.weights_.reshape(self.X_.shape[1], self.n_classes_, order='F')))
+            p = self.softmax(self.X_)
             dif = y_1hot - p
-            g = np.zeros((self.n_classes_) * self.X_.shape[1])
-            for j in range(self.X_.shape[0]):  # (to be improved)
-                g += np.kron(dif[j, :], self.X_[j, :])
+            g = np.zeros(self.X_.shape[1])
+            for j in range(self.n_classes_):
+                g_aux = dif[:, j].reshape(dif.shape[0], 1) * self.X_[:, j * int(self.X_.shape[1]/self.n_classes_): (j+1) * int(self.X_.shape[1]/self.n_classes_)]
+                g[j * int(self.X_.shape[1]/self.n_classes_): (j+1) * int(self.X_.shape[1]/self.n_classes_)] = np.sum(g_aux, axis=0)
+
             self.weights_ = np.dot(denom, np.dot(B, self.weights_) - g)
 
         # Return the classifiers
         return self
+
+    def softmax(self, X):
+        """Calculates the softmax of each row of X.
+
+        Parameters
+        ----------
+        X : array-like, shape (n_samples, n_classes)
+            Design matrix.
+
+        Returns
+        -------
+        y : array-like, shape (n_samples, n_classes)
+            Logistic of X.
+        """
+
+        X_ = np.zeros((X.shape[0], self.n_classes_))
+        for i in range(self.n_classes_):
+            X_[:, i] = np.dot(X[:, i * int(X.shape[1]/self.n_classes_): (i+1) * int(X.shape[1]/self.n_classes_)],
+                             self.weights_[i * int(X.shape[1]/self.n_classes_): (i+1) * int(X.shape[1]/self.n_classes_)])
+
+
+        exp_X = np.exp(X_ - np.max(X_, axis=1).reshape(-1, 1))
+        return exp_X / (np.sum(exp_X, axis=1)).reshape((X.shape[0], 1))
 
     def get_weights(self):
         """ Returns the feature weights of the classifiers.
@@ -176,14 +194,16 @@ class LogisticRegression(BaseEstimator, ClassifierMixin):
         # Input validation
         X = check_array(X)
 
-        weights = self.get_weights()
-
-        # Ads a first column of 1s (bias feature) to X
-        ones = np.ones((X.shape[0], 1))
-        X = np.hstack([ones, X])
+        # Ads the columns of 1s
+        X_ = np.ones((X.shape[0], 1))
+        for i in range(self.n_classes_):
+            aux = X[:, i * int(X.shape[1]/self.n_classes_): (i+1) * int(X.shape[1]/self.n_classes_)]
+            ones = np.ones((X.shape[0], 1))
+            X_ = np.hstack([X_, aux, ones])
+        X_ = X_[:, :-1]
 
         # Calculate probabilities
-        probs = softmax(np.dot(X, weights))
+        probs = self.softmax(X_)
 
         return probs
 
@@ -211,3 +231,29 @@ class LogisticRegression(BaseEstimator, ClassifierMixin):
         y = self.oneHot_.retransform(y_)
 
         return y
+
+if __name__ == '__main__':
+    from sklearn import datasets
+    from sklearn.model_selection import train_test_split
+    from sklearn.metrics import accuracy_score
+
+    #np.random.seed(1)
+    iris = datasets.load_iris()
+    X = iris.data
+    y = iris.target
+    X = iris.data[iris.target != 2, :]
+    y = iris.target[iris.target != 2]
+    # Divide in train and test
+    X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.3, random_state=1)
+
+    # Create and fit the Logistic Regression
+    logReg = LogisticRegressionperClass(l=0.01, n_iter=1000, warm_start=False)
+    logReg.fit(X_train, y_train)
+
+    # Make predictions
+    y_pred_prob = logReg.predict_proba(X_test)
+    y_pred = logReg.predict(X_test)
+    accuracy = accuracy_score(y_test, y_pred)
+    print(accuracy)
+
+    pass

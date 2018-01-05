@@ -299,7 +299,7 @@ def test_rbfn():
     pass
 
 def mnist():
-    #np.random.seed(1)
+    np.random.seed(1)
     digits = datasets.load_digits()
     X = digits.data
     y = digits.target
@@ -307,7 +307,7 @@ def mnist():
     X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.3, random_state=1)
 
     # Create and fit the Logistic Regression
-    rbfn = RadialBasisFunctionNetwork(link=0, n_iter=100, n_components=10, covariance_type='full',
+    rbfn = RadialBasisFunctionNetwork(link=1, n_iter=100, n_components=5, covariance_type='full',
                                       feature_type='post_prob', reg_covar=1e-6, n_iter_gmm=1, init_params='kmeans',
                                       weights_init=None, means_init=None, random_state=None, l=0.01, n_iter_logreg=1)
     rbfn.fit(X_train, y_train)
@@ -374,8 +374,8 @@ def iris():
     X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.3, random_state=1)
 
     # Create and fit the Logistic Regression
-    rbfn = RadialBasisFunctionNetwork(link=0, n_iter=100, n_components=5, covariance_type='full',
-                                      feature_type='post_prob', reg_covar=1e-3, n_iter_gmm=1, init_params='kmeans',
+    rbfn = RadialBasisFunctionNetwork(link=0, n_iter=100, n_components=3, covariance_type='full',
+                                      feature_type='proj_log_likelihood', reg_covar=1e-3, n_iter_gmm=1, init_params='kmeans',
                                       weights_init=None, means_init=None, random_state=None, l=0.01, n_iter_logreg=1)
     rbfn.fit(X_train, y_train)
 
@@ -405,6 +405,21 @@ if __name__ == '__main__':
     #mnist()
     #wine()
     #cancer()
-    iris()
+    #iris()
+
+    import numpy as np
+    from scipy.misc import logsumexp
+    import decimal
+
+    a = np.array([1e15], dtype=decimal.Decimal)
+
+    reg = np.log(0.01)
+
+    #aux = [reg, np.log(-a)]
+    aux = [reg, a[0].ln()]
+
+    lse = logsumexp(aux)
+
+    b = np.array(-np.exp(lse))
 
     pass
