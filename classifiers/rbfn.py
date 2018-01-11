@@ -7,7 +7,8 @@ from sklearn.utils.validation import check_X_y, check_array, check_is_fitted
 from sklearn.utils.multiclass import unique_labels
 from scipy.stats import multivariate_normal
 
-from classifiers.mult_log_reg_per_class import LogisticRegressionperClass
+#from classifiers.mult_log_reg_per_class import LogisticRegressionperClass
+from classifiers.mult_log_reg_per_class_BFGS import LogisticRegressionperClass
 from sklearn.linear_model import LogisticRegression
 from mixtures.gmm import GaussianMixture
 #from sklearn.mixture import GaussianMixture
@@ -77,6 +78,9 @@ class RadialBasisFunctionNetwork(BaseEstimator, ClassifierMixin):
         Must be one of::
             'full' (each component has its own general covariance matrix),
             'diag' (each component has its own diagonal covariance matrix)
+    equal_covariances : {True, False},
+            defaults to False.
+            If True in each mixture every component has the same covariance.
     reg_covar : float, defaults to 1e-6.
         Non-negative regularization added to the diagonal of covariance.
         Allows to assure that the covariance matrices are all positive definite.
@@ -117,13 +121,15 @@ class RadialBasisFunctionNetwork(BaseEstimator, ClassifierMixin):
     """
 
 
-    def __init__(self, link=0, n_iter=100, n_components=5, feature_type='likelihood', covariance_type='full', reg_covar=1e-6, n_iter_gmm=1,
-                 init_params='kmeans', weights_init=None, means_init=None, random_state=None, l=0.01, n_iter_logreg=1):
+    def __init__(self, link=0, n_iter=100, n_components=5, feature_type='likelihood', covariance_type='full',
+                 equal_covariances=False, reg_covar=1e-6, n_iter_gmm=1, init_params='kmeans', weights_init=None,
+                 means_init=None, random_state=None, l=0.01, n_iter_logreg=1):
         self.link = link
         self.n_iter = n_iter
         self.n_components = n_components
         self.feature_type = feature_type
         self.covariance_type = covariance_type
+        self.equal_covariances = equal_covariances
         self.reg_covar = reg_covar
         self.n_iter_gmm = n_iter_gmm
         self.init_params = init_params
@@ -179,9 +185,10 @@ class RadialBasisFunctionNetwork(BaseEstimator, ClassifierMixin):
         self.gmm_ = []
         for i in range(self.n_classes_):
             self.gmm_.append(GaussianMixture(n_components=self.n_components, covariance_type=self.covariance_type,
-                                    reg_covar=self.reg_covar, n_iter=self.n_iter_gmm, init_params=self.init_params,
-                                    weights_init=self.weights_init, means_init=self.means_init,
-                                    random_state=self.random_state, warm_start=True))
+                                             equal_covariances=self.equal_covariances, reg_covar=self.reg_covar,
+                                             n_iter=self.n_iter_gmm, init_params=self.init_params,
+                                             weights_init=self.weights_init, means_init=self.means_init,
+                                             random_state=self.random_state, warm_start=True))
 
 
 #        self.logReg_ = LogisticRegression(penalty='l2',  tol=1e-10, C=1.0/self.l, solver='sag',
@@ -190,7 +197,7 @@ class RadialBasisFunctionNetwork(BaseEstimator, ClassifierMixin):
 
 
         # design_matrix with shape (n_samples, number of total components in all the gmms), there are n_classes mixtures
-        design_matrix = np.zeros((self.X_.shape[0], self.n_classes_ * self.n_components))
+        design_matrix = np.empty((self.X_.shape[0], self.n_classes_ * self.n_components))
         priors = np.ones((self.n_classes_, self.n_components))
         for j in range(self.n_iter):
 
@@ -260,12 +267,12 @@ class RadialBasisFunctionNetwork(BaseEstimator, ClassifierMixin):
         # Input validation
         X = check_array(X)
 
-        post_probs = np.zeros((X.shape[0], means.shape[0]))
+        post_probs = np.empty((X.shape[0], means.shape[0]))
 
         for i in range(means.shape[0]):
             try:
                 if type == 'norm':
-                    post_probs[:, i] = multivariate_normal.pdf(X, mean=means[i, :], cov=covariances[i, :, :])
+                                                                                                                                                                                                                                                                                                                                                     post_probs[:, i] = multivariate_normal.pdf(X, mean=means[i, :], cov=covariances[i, :, :])
                 elif type == 'log':
                     post_probs[:, i] = multivariate_normal.logpdf(X, mean=means[i, :], cov=covariances[i, :, :])
             except np.linalg.LinAlgError as err:
@@ -427,9 +434,9 @@ if __name__ == '__main__':
         X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.3)
 
         # Create and fit the Logistic Regression
-        rbfn = RadialBasisFunctionNetwork(link=1000, n_iter=100, n_components=10, covariance_type='full', feature_type='post_prob', reg_covar=1e-6,
+        rbfn = RadialBasisFunctionNetwork(link=1000, n_iter=200, n_components=10, covariance_type='full', equal_covariances=True, feature_type='post_prob', reg_covar=1e-6,
                                           n_iter_gmm=1, init_params='kmeans', weights_init=None, means_init=None,
-                                          random_state=None, l=0.01, n_iter_logreg=1)
+                                          random_state=None, l=0.01, n_iter_logreg=100)
         rbfn.fit(X_train, y_train)
 
         # Make predictions

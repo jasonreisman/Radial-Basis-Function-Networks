@@ -7,6 +7,26 @@ from sklearn.utils.validation import check_X_y, check_array, check_is_fitted
 from sklearn.utils.multiclass import unique_labels
 from utils.one_hot_encoder import OneHotEncoder
 
+def woodburyMatrixInv(A, U, C, V):
+
+    aux = np.zeros((C.size, C.size))
+    np.fill_diagonal(aux, C)
+    C = aux
+    inv_A = np.linalg.inv(A)
+    inv_A_U = np.dot(inv_A, U)
+
+    return inv_A - np.dot(np.dot(inv_A_U, np.linalg.inv(np.linalg.inv(C) + np.dot(V, inv_A_U))), np.dot(V, inv_A))
+
+def ldl_decomp(A):
+    import numpy as np
+    A = np.matrix(A + np.identity(A.shape[0]) * 1e-6)
+    S = np.diag(np.diag(A))
+    Sinv = np.diag(1/np.diag(A))
+    D = np.matrix(S.dot(S))
+    Lch = np.linalg.cholesky(A)
+    L = np.matrix(Lch.dot(Sinv))
+    return L, D
+
 class LogisticRegressionperClass(BaseEstimator, ClassifierMixin):
     """ Multinomial Logistic Regression classifier with specific features for each class.
 
@@ -99,13 +119,44 @@ class LogisticRegressionperClass(BaseEstimator, ClassifierMixin):
 
         # One hot encodes target
         self.oneHot_ = OneHotEncoder().fit(self.y_)
-        y_1hot = self.oneHot_.transform(self.y_)
+        self.y_1hot = self.oneHot_.transform(self.y_)
 
         # Calculate new weights if warm_start is set to False or the method fit was never ran.
         if (self.warm_start is False) or (hasattr(self, 'weights_') is False):
 
             # shape (n_features). Saves the feature weights for each class.
             self.weights_ = np.ones(self.X_.shape[1]) * np.finfo(np.float64).eps
+
+        # U, S, V = np.linalg.svd(B)
+        # denom = woodburyMatrixInv(-reg, U, S, V)
+        # aux = np.linalg.inv(denom)
+
+        # L, D = ldl_decomp(-B)
+        # aux = np.dot(np.dot(L, D), L.T)
+        # sum = np.sum(aux + B)
+        # denom = - woodburyMatrixInv(reg, L, D.diagonal(), L.T)
+        # aux = np.linalg.inv(denom)
+
+
+        # inv_B = np.linalg.inv(B)
+        # W, V = np.linalg.eig(B)
+        # U, S, V_ = np.linalg.svd(B)
+        # inv_S = 1.0 / S
+        # chol_B = np.linalg.cholesky(B + np.identity(B.shape[0]) * 1e-6)
+        # inv_chol_B = np.linalg.inv(chol_B)
+        # lamb = np.identity(B.shape[0]) * self.l
+        # inv_lamb = np.linalg.inv(lamb)
+
+        # denom : array-like, shape ((n_classes-1)*n_features, (n_classes-1)*n_features)
+        #    Left side of the weight update step.
+
+#        denom = np.linalg.inv(B - self.l * np.eye(B.shape[0], B.shape[1]))
+#         reg = np.log(self.l)
+#         for i in range(B.shape[0]):
+#             aux = [reg, np.log(-B[i, i])]
+#             lse = logsumexp(aux)
+#             B[i, i] = -np.exp(lse)
+#         denom = np.linalg.inv(B)
 
 
         # Start of bound optimization algorithm
@@ -116,8 +167,8 @@ class LogisticRegressionperClass(BaseEstimator, ClassifierMixin):
 
         # denom : array-like, shape ((n_classes-1)*n_features, (n_classes-1)*n_features)
         #    Left side of the weight update step.
+        #denom = np.linalg.inv(B - self.l * np.eye(B.shape[0], B.shape[1]))
 
-#        denom = np.linalg.inv(B - self.l * np.eye(B.shape[0], B.shape[1]))
         reg = np.log(self.l)
         for i in range(B.shape[0]):
             aux = [reg, np.log(-B[i, i])]
@@ -127,16 +178,35 @@ class LogisticRegressionperClass(BaseEstimator, ClassifierMixin):
 
         for i in range(self.n_iter):
             p = self.softmax(self.X_)
-            dif = y_1hot - p
+            dif = self.y_1hot - p
             g = np.zeros(self.X_.shape[1])
             for j in range(self.n_classes_):
-                g_aux = dif[:, j].reshape(dif.shape[0], 1) * self.X_[:, j * int(self.X_.shape[1]/self.n_classes_): (j+1) * int(self.X_.shape[1]/self.n_classes_)]
-                g[j * int(self.X_.shape[1]/self.n_classes_): (j+1) * int(self.X_.shape[1]/self.n_classes_)] = np.sum(g_aux, axis=0)
+                g_aux = dif[:, j].reshape(dif.shape[0], 1) * self.X_[:, j * int(self.X_.shape[1] / self.n_classes_): (j + 1) * int(self.X_.shape[1] / self.n_classes_)]
+                g[j * int(self.X_.shape[1] / self.n_classes_): (j + 1) * int(self.X_.shape[1] / self.n_classes_)] = \
+                    np.sum(g_aux, axis=0)
 
             self.weights_ = np.dot(denom, np.dot(B, self.weights_) - g)
 
         # Return the classifiers
         return self
+
+    def cost(self, weights):
+
+        X_ = np.zeros((self.X_.shape[0], self.n_classes_))
+        for i in range(self.n_classes_):
+            X_[:, i] = np.dot(self.X_[:, i * int(self.X_.shape[1]/self.n_classes_): (i+1) * int(self.X_.shape[1]/self.n_classes_)],
+                             weights[i * int(self.X_.shape[1]/self.n_classes_): (i+1) * int(self.X_.shape[1]/self.n_classes_)])
+
+
+        exp_X = np.exp(X_ - np.max(X_, axis=1).reshape(-1, 1))
+        softmax = exp_X / (np.sum(exp_X, axis=1)).reshape((self.X_.shape[0], 1))
+
+        cost_ = np.log(softmax) * self.y_1hot
+
+        cost = - np.sum(cost_) + self.l * np.dot(weights, weights)
+
+        return cost
+
 
     def softmax(self, X):
         """Calculates the softmax of each row of X.

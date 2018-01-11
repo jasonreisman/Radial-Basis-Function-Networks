@@ -409,17 +409,17 @@ if __name__ == '__main__':
 
     import numpy as np
     from scipy.misc import logsumexp
-    import decimal
 
-    a = np.array([1e15], dtype=decimal.Decimal)
+    B = np.array([[1e12, 1], [1, 1e25]], dtype=np.longdouble)
 
-    reg = np.log(0.01)
-
-    #aux = [reg, np.log(-a)]
-    aux = [reg, a[0].ln()]
-
-    lse = logsumexp(aux)
-
-    b = np.array(-np.exp(lse))
+    n = 100
+    reg = np.ones(n) * 1e20/n
+    sum = np.array([0.01])
+    c = np.array([0.0])
+    for i in range(reg.size):
+        y = reg[i] - c    # So far, so good: c is zero.
+        t = sum + y         # Alas, sum is big, y small, so low-order digits of y are lost.
+        c = (sum - t) - y       # (t - sum) cancels the high-order part of y; subtracting y recovers negative (low part of y)
+        sum = t                 # Algebraically, c should always be zero. Beware overly-aggressive optimizing compilers!
 
     pass

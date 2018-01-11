@@ -25,7 +25,10 @@ class GaussianMixture(object):
         String describing the type of covariance parameters to use.
         Must be one of::
             'full' (each component has its own general covariance matrix),
-            'diag' (each component has its own diagonal covariance matrix),
+            'diag' (each component has its own diagonal covariance matrix)
+    equal_covariances : {True, False},
+            defaults to False.
+            If True in each mixture every component has the same covariance.
     reg_covar : float, defaults to 1e-6.
         Non-negative regularization added to the diagonal of covariance.
         Allows to assure that the covariance matrices are all positive definite.
@@ -34,7 +37,7 @@ class GaussianMixture(object):
     init_params : {'kmeans', 'random'}, defaults to 'kmeans'.
         The method used to initialize the weights, the means and the
         precisions.
-        Must be one of::
+        Must be one of:
             'kmeans' : responsibilities are initialized using kmeans.
             'random' : responsibilities are initialized randomly.
     weights_init : array-like, shape (n_components, ), optional
@@ -63,10 +66,11 @@ class GaussianMixture(object):
         The covariance of each mixture component.
     """
 
-    def __init__(self, n_components=1, covariance_type='full', reg_covar=1e-6, n_iter=100, init_params='kmeans',
-                 weights_init=None, means_init=None, random_state=None, warm_start=False):
+    def __init__(self, n_components=1, covariance_type='full', equal_covariances=False, reg_covar=1e-6, n_iter=100,
+                 init_params='kmeans', weights_init=None, means_init=None, random_state=None, warm_start=False):
         self.n_components = n_components
         self.covariance_type = covariance_type
+        self.equal_covariances = equal_covariances
         self.reg_covar = reg_covar
         self.n_iter = n_iter
         self.init_params = init_params
@@ -123,8 +127,10 @@ class GaussianMixture(object):
 
             self.covariances_ = np.zeros((self.n_components, X.shape[1], X.shape[1]))
             cov = np.cov(X.T) / self.n_components
-            for i in range(self.n_components):
-                self.covariances_[i, :, :] = cov
+            if self.covariance_type == 'diag':
+                diag = cov.diagonal()
+                cov = np.diag(diag)
+            self.covariances_[range(self.n_components), :, :] = cov
 
         self.prior_weights = prior_weights
         # In case no dirichlet prior was passed then a uniform distribution is assumed and MLE calculated instead
@@ -136,7 +142,7 @@ class GaussianMixture(object):
 
             self.resp_ = self._e_step(X)
 
-            self.weights_, self.means_, self.covariances_ = self._m_step(X)
+            self._m_step(X)
 
         return self
 
@@ -267,12 +273,11 @@ class GaussianMixture(object):
 
         covariances : array-like, shape (n_components, n_features, n_features)
         """
+        self.weights_ = self._calculate_new_weights()
+        self.means_ = self._calculate_new_means(X)
+        self.covariances_ = self._calculate_new_covariances(X)
 
-        weights = self._calculate_new_weights()
-        means = self._calculate_new_means(X)
-        covariances = self._calculate_new_covariances(X, means)
-
-        return weights, means, covariances
+        return
 
     def _calculate_new_weights(self):
         """Updates the weights based on the new responsibilities.
@@ -308,7 +313,7 @@ class GaussianMixture(object):
 
         return means
 
-    def _calculate_new_covariances(self, X, means):
+    def _calculate_new_covariances(self, X):
         """Updates the covariances based on the new responsibilities.
 
         Parameters
@@ -324,9 +329,10 @@ class GaussianMixture(object):
 
         X_dim = X.shape[1]
         covariances = np.empty((self.n_components, X_dim, X_dim))
+        mean_cov = np.zeros((X_dim, X_dim))
 
         for i in range(self.n_components):
-            centered_X = (X - means[i, :])
+            centered_X = (X - self.means_[i, :])
             numerator = np.dot(centered_X.T, centered_X * self.resp_[:, i].reshape(-1, 1))
             covariances[i, :, :] = numerator / np.sum(self.resp_[:, i])
 
@@ -334,6 +340,13 @@ class GaussianMixture(object):
             if self.covariance_type == 'diag':
                 diag = covariances[i, :, :].diagonal()
                 covariances[i, :, :] = np.diag(diag)
+
+            if self.equal_covariances is True:
+                mean_cov += self.weights_[i] * covariances[i, :, :]
+
+        if self.equal_covariances is True:
+            covariances[range(self.n_components), :, :] = mean_cov
+
 
         return covariances
 
@@ -375,7 +388,7 @@ if __name__ == '__main__':
         X[:N1, :] = np.random.multivariate_normal(mean=[0, 0], cov=[[7, -3], [-3, 8]], size=N1)
         X[N1:N1 + N2, :] = np.random.multivariate_normal(mean=[5, 5], cov=[[7, -3], [-3, 8]], size=N2)
 
-        gmm = GaussianMixture(n_components=2, covariance_type='full', reg_covar=1e-6, n_iter=10, init_params='kmeans',
+        gmm = GaussianMixture(n_components=2, covariance_type='full', equal_covariances=True, reg_covar=1e-6, n_iter=10, init_params='kmeans',
                               weights_init=None, means_init=None, random_state=None, warm_start=True)
 
         gmm.fit(X, prior_weights=np.array([1,1]))
