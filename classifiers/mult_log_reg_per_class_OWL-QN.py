@@ -115,8 +115,8 @@ class LogisticRegressionperClass(BaseEstimator, ClassifierMixin):
         cost = self.cost(self.weights_)
         gradient = self.gradient(self.weights_)
 
-        res = minimize(fun=self.cost, x0=self.weights_, method='BFGS', jac=self.gradient, options = {'maxiter' : self.n_iter, 'disp': False})
-        #res = fmin_l_bfgs_b(func=self.cost, x0=self.weights_, fprime=self.gradient, bounds=None, iprint=-1, maxiter=15000)
+        #res = minimize(fun=self.cost, x0=self.weights_, method='BFGS', jac=self.gradient, options = {'maxiter' : self.n_iter, 'disp': False})
+        res = fmin_l_bfgs_b(func=self.cost, x0=self.weights_, fprime=self.gradient, bounds=None, iprint=-1, maxiter=15000)
         self.weights_ = res.x
 
         # Return the classifiers

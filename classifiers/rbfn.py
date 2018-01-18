@@ -1,4 +1,5 @@
 import numbers
+import time
 
 import numpy as np
 import scipy
@@ -12,6 +13,8 @@ from classifiers.mult_log_reg_per_class_BFGS import LogisticRegressionperClass
 from sklearn.linear_model import LogisticRegression
 from mixtures.gmm import GaussianMixture
 #from sklearn.mixture import GaussianMixture
+
+from utils.stats import mult_gauss_pdf
 
 
 def simplex_proj(z):
@@ -269,21 +272,39 @@ class RadialBasisFunctionNetwork(BaseEstimator, ClassifierMixin):
 
         post_probs = np.empty((X.shape[0], means.shape[0]))
 
-        for i in range(means.shape[0]):
-            try:
-                if type == 'norm':
-                                                                                                                                                                                                                                                                                                                                                     post_probs[:, i] = multivariate_normal.pdf(X, mean=means[i, :], cov=covariances[i, :, :])
-                elif type == 'log':
-                    post_probs[:, i] = multivariate_normal.logpdf(X, mean=means[i, :], cov=covariances[i, :, :])
-            except np.linalg.LinAlgError as err:
-                if 'singular matrix' in str(err):
-                    cov = covariances[i, :, :] + np.eye(covariances[i, :, :].shape[0]) * self.reg_covar  # Add regularization to matrix
+        if self.covariance_type == 'full':
+            for i in range(means.shape[0]):
+                try:
                     if type == 'norm':
-                        post_probs[:, i] = multivariate_normal.pdf(X, mean=means[i, :], cov=cov)
+                        post_probs[:, i] = mult_gauss_pdf(X, mean=means[i, :], cov=covariances[i, :, :], log=False)
                     elif type == 'log':
-                        post_probs[:, i] = multivariate_normal.logpdf(X, mean=means[i, :], cov=cov)
-                else:
-                    raise
+                        post_probs[:, i] = mult_gauss_pdf(X, mean=means[i, :], cov=covariances[i, :, :], log=True)
+                except ValueError as err:
+                    if 'singular matrix' in str(err):
+                        cov = covariances[i, :, :] + np.eye(covariances[i, :, :].shape[0]) * self.reg_covar  # Add regularization to matrix
+                        if type == 'norm':
+                            post_probs[:, i] = mult_gauss_pdf(X, mean=means[i, :], cov=cov, log=False)
+                        elif type == 'log':
+                            post_probs[:, i] = mult_gauss_pdf(X, mean=means[i, :], cov=cov, log=True)
+                    else:
+                        raise
+
+        else:
+            for i in range(means.shape[0]):
+                try:
+                    if type == 'norm':
+                        post_probs[:, i] = mult_gauss_pdf(X, mean=means[i, :], cov=covariances[i, :], log=False)
+                    elif type == 'log':
+                        post_probs[:, i] = mult_gauss_pdf(X, mean=means[i, :], cov=covariances[i, :], log=True)
+                except ValueError as err:
+                    if 'singular matrix' in str(err):
+                        cov = covariances[i, :] + self.reg_covar  # Add regularization to matrix
+                        if type == 'norm':
+                            post_probs[:, i] = mult_gauss_pdf(X, mean=means[i, :], cov=cov, log=False)
+                        elif type == 'log':
+                            post_probs[:, i] = mult_gauss_pdf(X, mean=means[i, :], cov=cov, log=True)
+                    else:
+                        raise
 
         return post_probs
 
@@ -434,10 +455,13 @@ if __name__ == '__main__':
         X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.3)
 
         # Create and fit the Logistic Regression
-        rbfn = RadialBasisFunctionNetwork(link=1000, n_iter=200, n_components=10, covariance_type='full', equal_covariances=True, feature_type='post_prob', reg_covar=1e-6,
+        rbfn = RadialBasisFunctionNetwork(link=1000, n_iter=100, n_components=10, covariance_type='diag', equal_covariances=False, feature_type='post_prob', reg_covar=1e-6,
                                           n_iter_gmm=1, init_params='kmeans', weights_init=None, means_init=None,
                                           random_state=None, l=0.01, n_iter_logreg=100)
+        bef = time.time()
         rbfn.fit(X_train, y_train)
+        now = time.time()
+        print(now-bef)
 
         # Make predictions
         y_pred_prob = rbfn.predict_proba(X_test)

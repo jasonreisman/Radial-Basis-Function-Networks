@@ -1,10 +1,13 @@
 import warnings
+import time
 
 import numpy as np
 from sklearn.utils.validation import check_array, check_is_fitted
 from sklearn.cluster import KMeans
 from scipy.stats import multivariate_normal
 from scipy.misc import logsumexp
+
+from utils.stats import mult_gauss_pdf
 
 class GaussianMixture(object):
     """Gaussian Mixture.
@@ -62,8 +65,11 @@ class GaussianMixture(object):
         The weights of each mixture components.
     means_ : array-like, shape (n_components, n_features)
         The mean of each mixture component.
-    covariances_ : array-like, shape (n_components, n_features, n_features)
+    covariances_ : array-like
         The covariance of each mixture component.
+        The shape depends on `covariance_type`::
+            (n_components, n_features)             if 'diag',
+            (n_components, n_features, n_features) if 'full'
     """
 
     def __init__(self, n_components=1, covariance_type='full', equal_covariances=False, reg_covar=1e-6, n_iter=100,
@@ -105,7 +111,12 @@ class GaussianMixture(object):
             raise ValueError("Vector prior_weights must have lenght equal to n_components and be all positive; got (prior_weights = %r)"
                              % prior_weights)
 
-        X = check_array(X)
+        # Check type parameter
+        if self.covariance_type not in ['full', 'diag']:
+            raise ValueError("covariance_type must be a string contained in ['full', 'diag']. Valor passed: "
+                             "%s" % self.covariance_type)
+
+        self.X_ = check_array(X)
 
         # If warm_start is false or the method has not been fit before, initialize the parameters.
         if (self.warm_start is False) or (hasattr(self, 'weights_') is False):
@@ -125,12 +136,13 @@ class GaussianMixture(object):
                 elif self.init_params == 'random':
                     self.means_ = X[np.random.randint(X.shape[0], size=self.n_components), :]
 
-            self.covariances_ = np.zeros((self.n_components, X.shape[1], X.shape[1]))
-            cov = np.cov(X.T) / self.n_components
-            if self.covariance_type == 'diag':
-                diag = cov.diagonal()
-                cov = np.diag(diag)
-            self.covariances_[range(self.n_components), :, :] = cov
+            if self.covariance_type == "full":
+                self.covariances_ = np.zeros((self.n_components, X.shape[1], X.shape[1]))
+                self.covariances_[range(self.n_components), :, :] = np.eye(X.shape[1])
+            else:
+                self.covariances_ = np.zeros((self.n_components, X.shape[1]))
+                self.covariances_[range(self.n_components), :] = np.ones(X.shape[1])
+
 
         self.prior_weights = prior_weights
         # In case no dirichlet prior was passed then a uniform distribution is assumed and MLE calculated instead
@@ -242,19 +254,27 @@ class GaussianMixture(object):
 
         log_prob = np.empty((X.shape[0], self.n_components))
 
-        for i in range(self.n_components):
-            try:
-                log_prob[:, i] = multivariate_normal.logpdf(X, mean=self.means_[i], cov=self.covariances_[i, :, :])
-            except np.linalg.LinAlgError as err:
-                if 'singular matrix' in str(err):
-                    reg_cov = self.covariances_[i, :, :] + np.eye(self.covariances_[i, :, :].shape[0]) * self.reg_covar
-                    log_prob[:, i] = multivariate_normal.logpdf(X, mean=self.means_[i], cov=reg_cov)
-            except ValueError as err:
-                if 'the input matrix must be positive semidefinite' in str(err):
-                    reg_cov = self.covariances_[i, :, :] + np.eye(self.covariances_[i, :, :].shape[0]) * self.reg_covar
-                    log_prob[:, i] = multivariate_normal.logpdf(X, mean=self.means_[i], cov=reg_cov)
-                else:
-                    raise
+        if self.covariance_type == "full":
+            for i in range(self.n_components):
+                try:
+                    log_prob[:, i] = mult_gauss_pdf(X, mean=self.means_[i], cov=self.covariances_[i, :, :], log=True)
+                except ValueError as err:
+                    if 'singular matrix' in str(err):
+                        reg_cov = self.covariances_[i, :, :] + np.eye(self.covariances_[i, :, :].shape[0]) * self.reg_covar
+                        log_prob[:, i] = mult_gauss_pdf(X, mean=self.means_[i], cov=reg_cov, log=True)
+                    else:
+                        raise
+
+        else:
+            for i in range(self.n_components):
+                try:
+                    log_prob[:, i] = mult_gauss_pdf(X, mean=self.means_[i], cov=self.covariances_[i, :], log=True)
+                except ValueError as err:
+                    if 'singular matrix' in str(err):
+                        reg_cov = self.covariances_[i, :] + self.reg_covar
+                        log_prob[:, i] = mult_gauss_pdf(X, mean=self.means_[i], cov=reg_cov, log=True)
+                    else:
+                        raise
 
         return log_prob
 
@@ -328,27 +348,48 @@ class GaussianMixture(object):
         """
 
         X_dim = X.shape[1]
-        covariances = np.empty((self.n_components, X_dim, X_dim))
-        mean_cov = np.zeros((X_dim, X_dim))
 
-        for i in range(self.n_components):
-            centered_X = (X - self.means_[i, :])
-            numerator = np.dot(centered_X.T, centered_X * self.resp_[:, i].reshape(-1, 1))
-            covariances[i, :, :] = numerator / np.sum(self.resp_[:, i])
+        if self.covariance_type == "full":
+            covariances = np.empty((self.n_components, X_dim, X_dim))
+            mean_cov = np.zeros((X_dim, X_dim))
+            for i in range(self.n_components):
+                centered_X = (X - self.means_[i, :])
+                numerator = np.dot(centered_X.T, centered_X * self.resp_[:, i].reshape(-1, 1))
+                covariances[i, :, :] = numerator / np.sum(self.resp_[:, i])
 
-            # Maintains only the elements of the diagonal matrix if the covariance type is diagonal
-            if self.covariance_type == 'diag':
-                diag = covariances[i, :, :].diagonal()
-                covariances[i, :, :] = np.diag(diag)
+                if self.equal_covariances is True:
+                    mean_cov += self.weights_[i] * covariances[i, :, :]
 
             if self.equal_covariances is True:
-                mean_cov += self.weights_[i] * covariances[i, :, :]
+                covariances[range(self.n_components), :, :] = mean_cov
+        else:
+            covariances = np.empty((self.n_components, X_dim))
+            mean_cov = np.zeros(X_dim)
+            for i in range(self.n_components):
+                centered_X = (X - self.means_[i, :])
+                numerator = np.sum(centered_X.T * (centered_X * self.resp_[:, i].reshape(-1, 1)).T, axis=1)
+                covariances[i, :] = numerator / np.sum(self.resp_[:, i])
 
-        if self.equal_covariances is True:
-            covariances[range(self.n_components), :, :] = mean_cov
+                if self.equal_covariances is True:
+                    mean_cov += self.weights_[i] * covariances[i, :]
+
+            if self.equal_covariances is True:
+                covariances[range(self.n_components), :] = mean_cov
 
 
         return covariances
+
+    def get_covariances(self):
+
+        if self.covariance_type == "full":
+            return self.covariances_
+        else:
+            covariances = np.empty((self.n_components, self.X_.shape[1], self.X_.shape[1]))
+            for i in range(self.n_components):
+                covariances[i, :, :] = np.diag(self.covariances_[i,:])
+
+            return covariances
+
 
 if __name__ == '__main__':
 
@@ -388,13 +429,13 @@ if __name__ == '__main__':
         X[:N1, :] = np.random.multivariate_normal(mean=[0, 0], cov=[[7, -3], [-3, 8]], size=N1)
         X[N1:N1 + N2, :] = np.random.multivariate_normal(mean=[5, 5], cov=[[7, -3], [-3, 8]], size=N2)
 
-        gmm = GaussianMixture(n_components=2, covariance_type='full', equal_covariances=True, reg_covar=1e-6, n_iter=10, init_params='kmeans',
+        gmm = GaussianMixture(n_components=2, covariance_type='full', equal_covariances=True, reg_covar=1e-6, n_iter=100, init_params='kmeans',
                               weights_init=None, means_init=None, random_state=None, warm_start=True)
 
         gmm.fit(X, prior_weights=np.array([1,1]))
 
         centers = gmm.means_
-        cov_matrices = gmm.covariances_
+        cov_matrices = gmm.get_covariances()
 
         # plot data
         plt.figure()
