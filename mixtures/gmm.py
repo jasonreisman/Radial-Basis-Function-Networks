@@ -7,7 +7,7 @@ from sklearn.cluster import KMeans
 from scipy.stats import multivariate_normal
 from scipy.misc import logsumexp
 
-from utils.stats import mult_gauss_pdf
+from utils.stats import mult_gauss_pdf, log_multivariate_normal_density_diag, log_multivariate_normal_density_full
 
 class GaussianMixture(object):
     """Gaussian Mixture.
@@ -252,6 +252,29 @@ class GaussianMixture(object):
         log_prob : array, shape (n_samples, n_component)
         """
 
+        if self.covariance_type == "full":
+            log_prob = log_multivariate_normal_density_full(X, means=self.means_, covars=self.covariances_, reg=self.reg_covar)
+        else:
+            log_prob = log_multivariate_normal_density_diag(X, means=self.means_, covars=self.covariances_, reg=self.reg_covar)
+
+        return log_prob
+
+
+    def _estimate_log_prob_old(self, X):
+        """Estimate the log-probabilities log P(X | theta).
+
+        Compute the log-probabilities per each mixture for each sample in X with respect to
+        the current state of the model.
+
+        Parameters
+        ----------
+        X : array-like, shape (n_samples, n_features)
+
+        Returns
+        -------
+        log_prob : array, shape (n_samples, n_component)
+        """
+
         log_prob = np.empty((X.shape[0], self.n_components))
 
         if self.covariance_type == "full":
@@ -347,6 +370,8 @@ class GaussianMixture(object):
         covariances : array-like, shape (n_components, n_features, n_features)
         """
 
+        # Investigar se é possivel optimizar isto para fazer sem ciclos
+
         X_dim = X.shape[1]
 
         if self.covariance_type == "full":
@@ -429,7 +454,7 @@ if __name__ == '__main__':
         X[:N1, :] = np.random.multivariate_normal(mean=[0, 0], cov=[[7, -3], [-3, 8]], size=N1)
         X[N1:N1 + N2, :] = np.random.multivariate_normal(mean=[5, 5], cov=[[7, -3], [-3, 8]], size=N2)
 
-        gmm = GaussianMixture(n_components=2, covariance_type='full', equal_covariances=True, reg_covar=1e-6, n_iter=100, init_params='kmeans',
+        gmm = GaussianMixture(n_components=2, covariance_type='diag', equal_covariances=False, reg_covar=1e-6, n_iter=100, init_params='kmeans',
                               weights_init=None, means_init=None, random_state=None, warm_start=True)
 
         gmm.fit(X, prior_weights=np.array([1,1]))

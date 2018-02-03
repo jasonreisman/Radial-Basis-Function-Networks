@@ -8,13 +8,14 @@ from sklearn.utils.validation import check_X_y, check_array, check_is_fitted
 from sklearn.utils.multiclass import unique_labels
 from scipy.stats import multivariate_normal
 
-#from classifiers.mult_log_reg_per_class import LogisticRegressionperClass
-from classifiers.mult_log_reg_per_class_BFGS import LogisticRegressionperClass
+from classifiers.mult_log_reg_per_class import LogisticRegressionperClass
+#from classifiers.mult_log_reg_per_class_BFGS import LogisticRegressionperClass
+#from classifiers.mult_log_reg_per_class_OWL_QN import LogisticRegressionperClass
 from sklearn.linear_model import LogisticRegression
 from mixtures.gmm import GaussianMixture
 #from sklearn.mixture import GaussianMixture
 
-from utils.stats import mult_gauss_pdf
+from utils.stats import mult_gauss_pdf, log_multivariate_normal_density_diag, log_multivariate_normal_density_full
 
 
 def simplex_proj(z):
@@ -108,8 +109,11 @@ class RadialBasisFunctionNetwork(BaseEstimator, ClassifierMixin):
         by `np.random`.
 
     (For the Logistic Regression)
-    l : float, default: 0.01
-        Regularization strength; must be a positive float.
+    l1 : float, default: 0.01
+        l1 regularization strength; must be a positive float.
+        Bigger values specify stronger regularization.
+    l2 : float, default: 0.01
+        l2 regularization strength; must be a positive float.
         Bigger values specify stronger regularization.
     n_iter_logreg : int, default: 1
         Number of iterations performed by the optimization algorithm
@@ -126,7 +130,7 @@ class RadialBasisFunctionNetwork(BaseEstimator, ClassifierMixin):
 
     def __init__(self, link=0, n_iter=100, n_components=5, feature_type='likelihood', covariance_type='full',
                  equal_covariances=False, reg_covar=1e-6, n_iter_gmm=1, init_params='kmeans', weights_init=None,
-                 means_init=None, random_state=None, l=0.01, n_iter_logreg=1):
+                 means_init=None, random_state=None, l1=0.01, l2=0.01, n_iter_logreg=1):
         self.link = link
         self.n_iter = n_iter
         self.n_components = n_components
@@ -139,7 +143,8 @@ class RadialBasisFunctionNetwork(BaseEstimator, ClassifierMixin):
         self.weights_init = weights_init
         self.means_init = means_init
         self.random_state = random_state
-        self.l = l
+        self.l1 = l1
+        self.l2 = l2
         self.n_iter_logreg = n_iter_logreg
 
     def fit(self, X, y):
@@ -196,7 +201,7 @@ class RadialBasisFunctionNetwork(BaseEstimator, ClassifierMixin):
 
 #        self.logReg_ = LogisticRegression(penalty='l2',  tol=1e-10, C=1.0/self.l, solver='sag',
 #                                          max_iter=self.n_iter_logreg, multi_class='multinomial', warm_start=True)
-        self.logReg_ = LogisticRegressionperClass(l=self.l, n_iter=self.n_iter_logreg, warm_start=True)
+        self.logReg_ = LogisticRegressionperClass(l1=self.l1, l2=self.l2, n_iter=self.n_iter_logreg, warm_start=True)
 
 
         # design_matrix with shape (n_samples, number of total components in all the gmms), there are n_classes mixtures
@@ -273,38 +278,14 @@ class RadialBasisFunctionNetwork(BaseEstimator, ClassifierMixin):
         post_probs = np.empty((X.shape[0], means.shape[0]))
 
         if self.covariance_type == 'full':
-            for i in range(means.shape[0]):
-                try:
-                    if type == 'norm':
-                        post_probs[:, i] = mult_gauss_pdf(X, mean=means[i, :], cov=covariances[i, :, :], log=False)
-                    elif type == 'log':
-                        post_probs[:, i] = mult_gauss_pdf(X, mean=means[i, :], cov=covariances[i, :, :], log=True)
-                except ValueError as err:
-                    if 'singular matrix' in str(err):
-                        cov = covariances[i, :, :] + np.eye(covariances[i, :, :].shape[0]) * self.reg_covar  # Add regularization to matrix
-                        if type == 'norm':
-                            post_probs[:, i] = mult_gauss_pdf(X, mean=means[i, :], cov=cov, log=False)
-                        elif type == 'log':
-                            post_probs[:, i] = mult_gauss_pdf(X, mean=means[i, :], cov=cov, log=True)
-                    else:
-                        raise
+            post_probs = log_multivariate_normal_density_full(X, means=means, covars=covariances, reg=self.reg_covar)
+            if type == 'norm':
+                post_probs = np.exp(post_probs)
 
         else:
-            for i in range(means.shape[0]):
-                try:
-                    if type == 'norm':
-                        post_probs[:, i] = mult_gauss_pdf(X, mean=means[i, :], cov=covariances[i, :], log=False)
-                    elif type == 'log':
-                        post_probs[:, i] = mult_gauss_pdf(X, mean=means[i, :], cov=covariances[i, :], log=True)
-                except ValueError as err:
-                    if 'singular matrix' in str(err):
-                        cov = covariances[i, :] + self.reg_covar  # Add regularization to matrix
-                        if type == 'norm':
-                            post_probs[:, i] = mult_gauss_pdf(X, mean=means[i, :], cov=cov, log=False)
-                        elif type == 'log':
-                            post_probs[:, i] = mult_gauss_pdf(X, mean=means[i, :], cov=cov, log=True)
-                    else:
-                        raise
+            post_probs = log_multivariate_normal_density_diag(X, means=means, covars=covariances, reg=self.reg_covar)
+            if type == 'norm':
+                post_probs = np.exp(post_probs)
 
         return post_probs
 
@@ -457,7 +438,7 @@ if __name__ == '__main__':
         # Create and fit the Logistic Regression
         rbfn = RadialBasisFunctionNetwork(link=1000, n_iter=100, n_components=10, covariance_type='diag', equal_covariances=False, feature_type='post_prob', reg_covar=1e-6,
                                           n_iter_gmm=1, init_params='kmeans', weights_init=None, means_init=None,
-                                          random_state=None, l=0.01, n_iter_logreg=100)
+                                          random_state=None, l1=0.01, l2=0.01, n_iter_logreg=100)
         bef = time.time()
         rbfn.fit(X_train, y_train)
         now = time.time()
