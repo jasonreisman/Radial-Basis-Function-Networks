@@ -1,5 +1,0 @@
------
-OLD
------
-When link = 1, if one of the kernels is the most representative of the data, then the gmms weights get extremely
-unbalanced and this can lead to nans
