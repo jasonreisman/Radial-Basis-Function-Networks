@@ -11,14 +11,12 @@ from utils.stats import mult_gauss_pdf, log_multivariate_normal_density_diag, lo
 
 class GaussianMixture(object):
     """Gaussian Mixture.
-
     Representation of a Gaussian mixture model probability distribution.
     This class allows to estimate the parameters of a Gaussian mixture
     distribution.
     It was created with the intention to use in the Radial Basis Function Networks package.
     Keep in mind that some features were design with the objective to optimize the usage with
     this package.
-
     Parameters
     ----------
     n_components : int, defaults to 1.
@@ -32,6 +30,10 @@ class GaussianMixture(object):
     equal_covariances : {True, False},
             defaults to False.
             If True in each mixture every component has the same covariance.
+    gauss_kill : {True, False},
+        defaults to False.
+        If True when a prior of the gmm weights is 0 the corresponding
+        component weight will be set entirely to 0.
     reg_covar : float, defaults to 1e-6.
         Non-negative regularization added to the diagonal of covariance.
         Allows to assure that the covariance matrices are all positive definite.
@@ -58,7 +60,6 @@ class GaussianMixture(object):
         If 'warm_start' is True, the solution of the last fitting is used as
         initialization for the next call of fit(). This can speed up
         convergence when fit is called several time on similar problems.
-
     Attributes
     ----------
     weights_ : array-like, shape (n_components, )
@@ -72,11 +73,13 @@ class GaussianMixture(object):
             (n_components, n_features, n_features) if 'full'
     """
 
-    def __init__(self, n_components=1, covariance_type='full', equal_covariances=False, reg_covar=1e-6, n_iter=100,
-                 init_params='kmeans', weights_init=None, means_init=None, random_state=None, warm_start=False):
+    def __init__(self, n_components=1, covariance_type='full', equal_covariances=False, gauss_kill=False,
+                 reg_covar=1e-6, n_iter=100, init_params='kmeans', weights_init=None, means_init=None,
+                 random_state=None, warm_start=False):
         self.n_components = n_components
         self.covariance_type = covariance_type
         self.equal_covariances = equal_covariances
+        self.gauss_kill = gauss_kill
         self.reg_covar = reg_covar
         self.n_iter = n_iter
         self.init_params = init_params
@@ -87,7 +90,6 @@ class GaussianMixture(object):
 
     def fit(self, X, y=None, prior_weights=None):
         """Fits the gaussian mixture to the data.
-
         Parameters
         ----------
         X : array-like, shape = [n_samples, n_features]
@@ -98,8 +100,6 @@ class GaussianMixture(object):
         prior_weights : array-like, shape (n_components, ), default = ones(n_components)
             Weights of the dirichlet prior used in the m step when calculating
             the MAP estimate of the mixture weights.
-
-
         Returns
         -------
         self : object
@@ -160,13 +160,11 @@ class GaussianMixture(object):
 
     def predict_proba(self, X):
         """Predict posterior probability of each component given the data.
-
         Parameters
         ----------
         X : array-like, shape (n_samples, n_features)
             List of n_features-dimensional data points. Each row
             corresponds to a single data point.
-
         Returns
         -------
         resp : array, shape (n_samples, n_components)
@@ -182,11 +180,9 @@ class GaussianMixture(object):
 
     def _e_step(self, X):
         """E step.
-
         Parameters
         ----------
         X : array-like, shape (n_samples, n_features)
-
         Returns
         -------
         responsibility : array, shape (n_samples, n_components)
@@ -200,17 +196,13 @@ class GaussianMixture(object):
 
     def _estimate_log_resp(self, X):
         """Estimate log responsibilities for each sample.
-
         Compute the responsibilities for each sample in X with respect to
         the current state of the model.
-
         Parameters
         ----------
         X : array-like, shape (n_samples, n_features)
-
         Returns
         -------
-
         log_responsibilities : array, shape (n_samples, n_components)
             logarithm of the responsibilities
         """
@@ -223,30 +215,25 @@ class GaussianMixture(object):
 
     def _estimate_weighted_log_prob(self, X):
         """Estimate the weighted log-probabilities, log P(X | theta) + log weights.
-
         Parameters
         ----------
         X : array-like, shape (n_samples, n_features)
-
         Returns
         -------
         weighted_log_prob : array, shape (n_samples, n_component)
         """
 
-        weighted_log_prob = self._estimate_log_prob(X) + np.log(self.weights_)
+        weighted_log_prob = self._estimate_log_prob(X) + np.log(self.weights_ + np.finfo(np.float64).eps)
 
         return weighted_log_prob
 
     def _estimate_log_prob(self, X):
         """Estimate the log-probabilities log P(X | theta).
-
         Compute the log-probabilities per each mixture for each sample in X with respect to
         the current state of the model.
-
         Parameters
         ----------
         X : array-like, shape (n_samples, n_features)
-
         Returns
         -------
         log_prob : array, shape (n_samples, n_component)
@@ -262,14 +249,11 @@ class GaussianMixture(object):
 
     def _estimate_log_prob_old(self, X):
         """Estimate the log-probabilities log P(X | theta).
-
         Compute the log-probabilities per each mixture for each sample in X with respect to
         the current state of the model.
-
         Parameters
         ----------
         X : array-like, shape (n_samples, n_features)
-
         Returns
         -------
         log_prob : array, shape (n_samples, n_component)
@@ -303,17 +287,13 @@ class GaussianMixture(object):
 
     def _m_step(self, X):
         """M step.
-
         Parameters
         ----------
         X : array-like, shape (n_samples, n_features)
-
         Returns
         -------
         weights : array, shape (n_components,)
-
         means : array, shape (n_components, n_features)
-
         covariances : array-like, shape (n_components, n_features, n_features)
         """
         self.weights_ = self._calculate_new_weights()
@@ -324,24 +304,25 @@ class GaussianMixture(object):
 
     def _calculate_new_weights(self):
         """Updates the weights based on the new responsibilities.
-
          Returns
          -------
          weights : array, shape (n_components,)
          """
 
         weights = np.sum(self.resp_, axis=0) + self.prior_weights - 1
-        weights = weights / np.sum(weights)
+
+        if self.gauss_kill is True:
+            weights[self.prior_weights==1] = 0
+
+        weights = weights / (np.sum(weights) + np.finfo(np.float64).eps)
 
         return weights
 
     def _calculate_new_means(self, X):
         """Updates the means based on the new responsibilities.
-
         Parameters
         ----------
         X : array-like, shape (n_samples, n_features)
-
         Returns
         -------
         means : array, shape (n_components, n_features)
@@ -358,13 +339,10 @@ class GaussianMixture(object):
 
     def _calculate_new_covariances(self, X):
         """Updates the covariances based on the new responsibilities.
-
         Parameters
         ----------
         X : array-like, shape (n_samples, n_features)
-
         means : array, shape (n_components, n_features)
-
         Returns
         -------
         covariances : array-like, shape (n_components, n_features, n_features)

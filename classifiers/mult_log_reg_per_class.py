@@ -28,7 +28,7 @@ class LogisticRegressionperClass(BaseEstimator, ClassifierMixin):
         l2 regularization strength; must be a positive float.
         Bigger values specify stronger regularization.
 
-    n_iter : int, default: 1000
+    n_iter : int, default: 15000
         Number of iterations performed by the optimization algorithm
         in search for the optimal weights.
 
@@ -39,7 +39,7 @@ class LogisticRegressionperClass(BaseEstimator, ClassifierMixin):
         and target arrays (obliged to have same shapes as previous).
     """
 
-    def __init__(self, l1=0.01, l2=0.01, n_iter=1000, warm_start=False):
+    def __init__(self, l1=0.01, l2=0.01, n_iter=15000, warm_start=False):
         self.l1 = l1
         self.l2 = l2
         self.n_iter = n_iter
@@ -117,7 +117,7 @@ class LogisticRegressionperClass(BaseEstimator, ClassifierMixin):
 
         # Optimization of the weights
         w, f, d = fmin_l_bfgs_b(func=self.logistic_loss_grad, x0=self.x0, fprime=None, bounds=[(0, None)] * n_features * 2,
-                                args=(X_, y_1hot, self.l1, self.l2))
+                                args=(X_, y_1hot, self.l1, self.l2), maxiter=self.n_iter)
         self.x0 = w
         self.weights_ = w[:n_features] - w[n_features:]
 

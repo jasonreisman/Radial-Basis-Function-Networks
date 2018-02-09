@@ -2,6 +2,7 @@ import numbers
 import time
 
 import numpy as np
+import pandas as pd
 import scipy
 from sklearn.base import BaseEstimator, ClassifierMixin
 from sklearn.utils.validation import check_X_y, check_array, check_is_fitted
@@ -20,7 +21,6 @@ from utils.stats import mult_gauss_pdf, log_multivariate_normal_density_diag, lo
 
 def simplex_proj(z):
     """Projectets rows of z in the simplex.
-
     this will process a 2d-array $z$, where axis 1 (each row) is assumed to be
     the the z-vector.
     """
@@ -49,11 +49,9 @@ def simplex_proj(z):
 
 class RadialBasisFunctionNetwork(BaseEstimator, ClassifierMixin):
     """ Implements a Radial Basis Function Network classifier.
-
     Uses Gaussian Mixture Models for the Radial Functions. The way of training allows
     a link between the EM step of the GMM and the Logistic Regression, where the weights
     of the Logistic Regression are to be used for the training of the Gaussian Mixture Models.
-
     Parameters
     ----------
     link : integer, default 0
@@ -79,12 +77,16 @@ class RadialBasisFunctionNetwork(BaseEstimator, ClassifierMixin):
     covariance_type : {'full', 'diag'},
             defaults to 'full'.
         String describing the type of covariance parameters to use.
-        Must be one of::
+        Must be one of:
             'full' (each component has its own general covariance matrix),
             'diag' (each component has its own diagonal covariance matrix)
     equal_covariances : {True, False},
             defaults to False.
             If True in each mixture every component has the same covariance.
+    gauss_kill : {True, False},
+        defaults to False.
+        If True when a prior of the gmm weights is 0 the corresponding
+        component weight will be set entirely to 0.
     reg_covar : float, defaults to 1e-6.
         Non-negative regularization added to the diagonal of covariance.
         Allows to assure that the covariance matrices are all positive definite.
@@ -118,7 +120,6 @@ class RadialBasisFunctionNetwork(BaseEstimator, ClassifierMixin):
     n_iter_logreg : int, default: 1
         Number of iterations performed by the optimization algorithm
         in search for the optimal weights.
-
     Attributes
     ----------
     X_ : array, shape = [n_samples, n_features]
@@ -129,7 +130,7 @@ class RadialBasisFunctionNetwork(BaseEstimator, ClassifierMixin):
 
 
     def __init__(self, link=0, n_iter=100, n_components=5, feature_type='likelihood', covariance_type='full',
-                 equal_covariances=False, reg_covar=1e-6, n_iter_gmm=1, init_params='kmeans', weights_init=None,
+                 equal_covariances=False, gauss_kill=False, reg_covar=1e-6, n_iter_gmm=1, init_params='kmeans', weights_init=None,
                  means_init=None, random_state=None, l1=0.01, l2=0.01, n_iter_logreg=1):
         self.link = link
         self.n_iter = n_iter
@@ -137,6 +138,7 @@ class RadialBasisFunctionNetwork(BaseEstimator, ClassifierMixin):
         self.feature_type = feature_type
         self.covariance_type = covariance_type
         self.equal_covariances = equal_covariances
+        self.gauss_kill=gauss_kill
         self.reg_covar = reg_covar
         self.n_iter_gmm = n_iter_gmm
         self.init_params = init_params
@@ -149,14 +151,12 @@ class RadialBasisFunctionNetwork(BaseEstimator, ClassifierMixin):
 
     def fit(self, X, y):
         """Fit a Radial Basis Function Network classifier to the training data.
-
         Parameters
         ----------
         X : array-like, shape = [n_samples, n_features]
             The training input samples.
         y : array-like, shape = [n_samples]
             The target values. An array of int.
-
         Returns
         -------
         self : object
@@ -193,7 +193,7 @@ class RadialBasisFunctionNetwork(BaseEstimator, ClassifierMixin):
         self.gmm_ = []
         for i in range(self.n_classes_):
             self.gmm_.append(GaussianMixture(n_components=self.n_components, covariance_type=self.covariance_type,
-                                             equal_covariances=self.equal_covariances, reg_covar=self.reg_covar,
+                                             equal_covariances=self.equal_covariances, gauss_kill=self.gauss_kill, reg_covar=self.reg_covar,
                                              n_iter=self.n_iter_gmm, init_params=self.init_params,
                                              weights_init=self.weights_init, means_init=self.means_init,
                                              random_state=self.random_state, warm_start=True))
@@ -242,7 +242,6 @@ class RadialBasisFunctionNetwork(BaseEstimator, ClassifierMixin):
 
     def predict_likelihoods(self, X, means, covariances, type='norm'):
         """ Predict likelihood of each sample given the mixtures.
-
         Parameters
         ----------
         X : array-like of shape = [n_samples, n_features]
@@ -258,7 +257,6 @@ class RadialBasisFunctionNetwork(BaseEstimator, ClassifierMixin):
         type : string, defaults to 'norm'
             'norm' (normal likelihoods)
             'log' (log likelihoods)
-
         Returns
         -------
         post_probs : array-like of shape = [n_samples, n_components]
@@ -291,7 +289,6 @@ class RadialBasisFunctionNetwork(BaseEstimator, ClassifierMixin):
 
     def get_mixtures(self):
         """Returns the centers and co-variance matrices of the GMM.
-
         Returns
         -------
         centers : array, shape (n_components,)
@@ -310,12 +307,10 @@ class RadialBasisFunctionNetwork(BaseEstimator, ClassifierMixin):
 
     def predict_proba(self, X):
         """ Predict the probabilities of the data belonging to each class.
-
         Parameters
         ----------
         X : array-like of shape = [n_samples, n_features]
             The input samples.
-
         Returns
         -------
         probs : array of int of shape = [n_samples, n_classes]
@@ -353,12 +348,10 @@ class RadialBasisFunctionNetwork(BaseEstimator, ClassifierMixin):
 
     def predict(self, X):
         """ Predict the classes each sample belongs to.
-
         Parameters
         ----------
         X : array-like of shape = [n_samples, n_features]
             The input samples.
-
         Returns
         -------
         y : array of int of shape = [n_samples,]
@@ -398,14 +391,11 @@ class RadialBasisFunctionNetwork(BaseEstimator, ClassifierMixin):
 
     def calculate_priors(self, logReg_weights):
         """ Calculates the priors to be passed to the GMM.
-
         The log reg weights are normalized and scales by the link parameter
-
             Parameters
             ----------
             logReg_weights :  array, shape (n_features, )
                 Coefficient of the features in the decision function.
-
             Returns
             -------
             priors : array, shape (n_classes, n_components)
@@ -417,7 +407,7 @@ class RadialBasisFunctionNetwork(BaseEstimator, ClassifierMixin):
 
         for i in range(self.n_classes_):
             prior_temp = logReg_weights_abs[i * int(logReg_weights.size/self.n_classes_): (i+1) * int(logReg_weights.size/self.n_classes_)][1:]
-            priors[i, :] = priors[i, :] + self.link * (prior_temp / np.sum(prior_temp))
+            priors[i, :] = priors[i, :] + self.link * (prior_temp / (np.sum(prior_temp) + np.finfo(np.float64).eps))
 
         return priors
 
@@ -426,29 +416,131 @@ if __name__ == '__main__':
     from sklearn import datasets
     from sklearn.metrics import accuracy_score
     from sklearn.model_selection import train_test_split
+    from scipy.io import loadmat
 
-    def mnist():
-        np.random.seed(1)
-        digits = datasets.load_digits()
-        X = digits.data
-        y = digits.target
-        # Divide in train and test
-        X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.3)
-
+    def evaluate(X_train, X_test, y_train, y_test):
         # Create and fit the Logistic Regression
-        rbfn = RadialBasisFunctionNetwork(link=1000, n_iter=100, n_components=10, covariance_type='diag', equal_covariances=False, feature_type='post_prob', reg_covar=1e-6,
-                                          n_iter_gmm=1, init_params='kmeans', weights_init=None, means_init=None,
-                                          random_state=None, l1=0.01, l2=0.01, n_iter_logreg=100)
+        rbfn = RadialBasisFunctionNetwork(link=100, n_iter=1000, n_components=3, covariance_type='full',
+                                          equal_covariances=False, feature_type='post_prob', gauss_kill=True,
+                                          reg_covar=1e-6, n_iter_gmm=1, init_params='kmeans', weights_init=None,
+                                          means_init=None, random_state=None, l1=1, l2=0.01, n_iter_logreg=15000)
         bef = time.time()
         rbfn.fit(X_train, y_train)
         now = time.time()
-        print(now-bef)
+        print(now - bef)
 
         # Make predictions
-        y_pred_prob = rbfn.predict_proba(X_test)
+        #        y_pred_prob = rbfn.predict_proba(X_test)
         y_pred = rbfn.predict(X_test)
         accuracy = accuracy_score(y_test, y_pred)
         print(accuracy)
         pass
 
-    mnist()
+    def iris():
+        np.random.seed(1)
+        digits = datasets.load_iris()
+        X = digits.data
+        y = digits.target
+        # Divide in train and test
+        X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.5)
+
+        evaluate(X_train, X_test, y_train, y_test)
+
+    def wbdc():
+        np.random.seed(1)
+        df = pd.read_csv('https://raw.githubusercontent.com/rasbt/python-machine-learning-book/master/code/datasets/wdbc/wdbc.data', header=None)
+        y = df[[1]].values.ravel()
+        X = df.drop([0,1], axis=1).values
+        # Divide in train and test
+        X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.5)
+
+        evaluate(X_train, X_test, y_train, y_test)
+
+    def glass():
+        np.random.seed(1)
+        df = pd.read_csv('../datasets/glass.csv')
+        y = df[['Type']].values.ravel()
+        X = df.drop(['Type'], axis=1).values
+        # Divide in train and test
+        X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.49)
+
+        evaluate(X_train, X_test, y_train, y_test)
+
+    def sonar():
+        np.random.seed(1)
+        df = pd.read_csv('../datasets/sonar.csv')
+        X = np.vstack((df.columns.values, df.values))
+        y = X[:, -1]
+        X = X[:, :-1]
+        # Divide in train and test
+        X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.495)
+
+        evaluate(X_train, X_test, y_train, y_test)
+
+    def wine():
+        np.random.seed(1)
+        digits = datasets.load_wine()
+        X = digits.data
+        y = digits.target
+        # Divide in train and test
+        X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.49)
+
+        evaluate(X_train, X_test, y_train, y_test)
+
+    def colon():
+        np.random.seed(1)
+        filename = '/home/joao/Documents/Thesis/Radial_Basis_Funtion_Networks/datasets/colon.csv'
+        df = pd.read_csv(filename, sep=' ', header=None)
+        X = df.values.T
+        filename = '/home/joao/Documents/Thesis/Radial_Basis_Funtion_Networks/datasets/colon_target.csv'
+        df = pd.read_csv(filename, sep=' ', header=None)
+        df.values[df.values < 0] = 0
+        df.values[df.values > 0] = 1
+        y = df.values.ravel()
+        # Divide in train and test
+        X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.5)
+
+        evaluate(X_train, X_test, y_train, y_test)
+
+    def leukemia():
+        np.random.seed(1)
+        filename = '/home/joao/Documents/Thesis/Radial_Basis_Funtion_Networks/datasets/leukemia.csv'
+        df = pd.read_csv(filename)
+        X = df.values.T
+        filename = '/home/joao/Documents/Thesis/Radial_Basis_Funtion_Networks/datasets/colon_target.csv'
+        y = np.zeros(df.columns.size)
+        for ind, i in enumerate(df.columns):
+            if 'AML' in i:
+                y[ind] = 1
+
+        # Divide in train and test
+        X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.46)
+
+        evaluate(X_train, X_test, y_train, y_test)
+
+        def orl():
+            np.random.seed(1)
+            filename = '/home/joao/Documents/Thesis/Radial_Basis_Funtion_Networks/datasets/ORL.mat'
+            data = loadmat(filename)
+            X = df.values.T
+            filename = '/home/joao/Documents/Thesis/Radial_Basis_Funtion_Networks/datasets/colon_target.csv'
+            y = np.zeros(df.columns.size)
+            for ind, i in enumerate(df.columns):
+                if 'AML' in i:
+                    y[ind] = 1
+
+            # Divide in train and test
+            X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.46)
+
+            evaluate(X_train, X_test, y_train, y_test)
+
+    #iris()
+    #wbdc()
+    #glass()
+    #sonar()
+    wine()
+    #colon()
+    #leukemia()
+
+    # For nans
+    # wine - link=100, n_iter=1000, n_components=3, covariance_type='full', equal_covariances=False, feature_type='post_prob', gauss_kill=True,reg_covar=1e-6, n_iter_gmm=1, init_params='kmeans', weights_init=None,means_init=None, random_state=None, l1=1, l2=0.01, n_iter_logreg=15000
