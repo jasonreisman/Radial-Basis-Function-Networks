@@ -28,7 +28,7 @@ class LogisticRegressionperClass(BaseEstimator, ClassifierMixin):
         l2 regularization strength; must be a positive float.
         Bigger values specify stronger regularization.
 
-    n_iter : int, default: 15000
+    max_iter : int, default: 15000
         Number of iterations performed by the optimization algorithm
         in search for the optimal weights.
 
@@ -39,13 +39,13 @@ class LogisticRegressionperClass(BaseEstimator, ClassifierMixin):
         and target arrays (obliged to have same shapes as previous).
     """
 
-    def __init__(self, l1=0.01, l2=0.01, n_iter=15000, warm_start=False):
+    def __init__(self, l1=0.01, l2=0.01, max_iter=15000, warm_start=False):
         self.l1 = l1
         self.l2 = l2
-        self.n_iter = n_iter
+        self.max_iter = max_iter
         self.warm_start = warm_start
 
-    def fit(self, X, y):  # verificar se y está one-hot encoded, se l e n_iter são maiores que 0
+    def fit(self, X, y, n_weights_per_class=None, weights2kill=None,):  # verificar se y está one-hot encoded, se l e max_iter são maiores que 0
         """Fit the model according to the given training data.
 
         Parameters
@@ -57,6 +57,14 @@ class LogisticRegressionperClass(BaseEstimator, ClassifierMixin):
         y : array-like, shape (n_samples,)
             Target vector relative to X.
 
+        n_weights_per_class : array-like, shape = (n_classes,)
+            Number of weights for each class.
+            The sum of ths vector is the total number of variables.
+
+        weights2kill : array-like, shape = (n_weights in past iteration,)
+            Weights of gaussian mixtures components in past iteration.
+            The positions with 0 are to be erased in the gmm parameters.
+
         Returns
         -------
         self : object
@@ -65,23 +73,24 @@ class LogisticRegressionperClass(BaseEstimator, ClassifierMixin):
 
         # Check if the initialized parameters are correct
         if not isinstance(self.l1, numbers.Number) or self.l1 < 0:
-            raise ValueError("Penalty (l1) term must be positive; got (l1=%r)"
-                             % self.l1)
+            raise ValueError("Penalty (l1) term must be positive; got (l1=%r)" % self.l1)
+
         if not isinstance(self.l2, numbers.Number) or self.l2 < 0:
-            raise ValueError("Penalty (l2) term must be positive; got (l2=%r)"
-                             % self.l2)
-        if not isinstance(self.n_iter, numbers.Number) or self.n_iter < 0:
-            raise ValueError("Maximum number of iterations (max_iter) must be positive;"
-                             " got (max_iter=%r)" % self.n_iter)
+            raise ValueError("Penalty (l2) term must be positive; got (l2=%r)" % self.l2)
+
+        if not isinstance(self.max_iter, numbers.Number) or self.max_iter < 0:
+            raise ValueError("Maximum number of iterations (max_iter) must be positive; got (max_iter=%r)"
+                             % self.max_iter)
 
         # Check that X and y have correct shape
-        X, y = check_X_y(X, y)
+
+        X, y = check_X_y(X, y, ensure_min_features=0)
+
 
         # Store the classes seen during fit by extracting an ordered array of unique labels from target
         self.classes_ = unique_labels(y)
         # Store the number of classes
         self.n_classes_ = self.classes_.size
-
 
         n_samples, n_features = X.shape
 
@@ -91,18 +100,18 @@ class LogisticRegressionperClass(BaseEstimator, ClassifierMixin):
                              " in the data, but the data contains only one"
                              " class: %r" % self.classes_[0])
 
-        # If features_per_class=True but the number of features is not a multiple of the number of classes throw error.
-        if n_features % self.n_classes_ != 0:
-            raise ValueError("The number of features of X must be a multiple of the number of classes when "
-                             "features_per_class=True;")
+        self.n_weights_per_class = n_weights_per_class
 
         # Saves training and target arrays
         # Ads n_classes columns of 1s (bias feature) to X
         X_ = np.ones((n_samples, 1))
-        for i in range(self.n_classes_):
-            aux = X[:, i * int(n_features/self.n_classes_): (i+1) * int(n_features/self.n_classes_)]
+        old_ind = 0
+        for n in n_weights_per_class:
+            new_ind = int(old_ind + n)
+            aux = X[:, old_ind: new_ind]
             ones = np.ones((n_samples, 1))
             X_ = np.hstack([X_, aux, ones])
+            old_ind = new_ind
         X_ = X_[:, :-1]
 
         n_samples, n_features = X_.shape
@@ -115,9 +124,15 @@ class LogisticRegressionperClass(BaseEstimator, ClassifierMixin):
         if (self.warm_start is False) or (hasattr(self, 'weights_') is False):
             self.x0 = np.ones(n_features * 2) * np.finfo(np.float64).eps
 
+        # Delete from the last iteration parameters the ones that were created by discarded gmm components
+        else:
+            ind = np.argwhere(weights2kill == 0)
+            ind = np.append(ind, ind + weights2kill.size)
+            self.x0 = np.delete(self.x0, ind)
+
         # Optimization of the weights
         w, f, d = fmin_l_bfgs_b(func=self.logistic_loss_grad, x0=self.x0, fprime=None, bounds=[(0, None)] * n_features * 2,
-                                args=(X_, y_1hot, self.l1, self.l2), maxiter=self.n_iter)
+                                args=(X_, y_1hot, self.l1, self.l2), maxiter=self.max_iter)
         self.x0 = w
         self.weights_ = w[:n_features] - w[n_features:]
 
@@ -130,10 +145,11 @@ class LogisticRegressionperClass(BaseEstimator, ClassifierMixin):
         w = w_extended[:n_features] - w_extended[n_features:]
 
         X_ = np.empty((n_samples, self.n_classes_))
-        for i in range(self.n_classes_):
-            X_[:, i] = np.dot(X[:, i * int(n_features/self.n_classes_): (i+1) * int(n_features/self.n_classes_)],
-                             w[i * int(n_features/self.n_classes_): (i+1) * int(n_features/self.n_classes_)])
-
+        old_ind = 0
+        for i, n in enumerate(self.n_weights_per_class):
+            new_ind = int(old_ind + n + 1)
+            X_[:, i] = np.dot(X[:, old_ind: new_ind], w[old_ind: new_ind])
+            old_ind = new_ind
 
         exp_X = np.exp(X_ - np.max(X_, axis=1).reshape(-1, 1))
         softmax = exp_X / (np.sum(exp_X, axis=1)).reshape((n_samples, 1))
@@ -146,23 +162,18 @@ class LogisticRegressionperClass(BaseEstimator, ClassifierMixin):
         dif = y_1hot - softmax
 
         grad = np.empty(n_features)
-        for j in range(self.n_classes_):
-            g_aux = dif[:, j].reshape(dif.shape[0], 1) * X[:, j * int(n_features / self.n_classes_):
-            (j + 1) * int(n_features / self.n_classes_)]
-            grad[j * int(n_features / self.n_classes_): (j + 1) * int(n_features / self.n_classes_)] \
-                = - np.sum(g_aux, axis=0)
+        old_ind = 0
+        for i, n in enumerate(self.n_weights_per_class):
+            new_ind = int(old_ind + n + 1)
+            g_aux = dif[:, i].reshape(dif.shape[0], 1) * X[:, old_ind: new_ind]
+            grad[old_ind: new_ind] = - np.sum(g_aux, axis=0)
+            old_ind = new_ind
 
         grad = np.concatenate([grad, -grad])
         grad += self.l1 # l1 regularization
         grad += self.l2 * w_extended # l2 regularization
 
         return cost, grad
-
-    def hessian(self, weights):
-
-        H = -0.5 * (1 - 1 / self.n_classes_) * np.dot(self.X_.T, self.X_)
-
-        return H
 
     def softmax(self, X):
         """Calculates the softmax of each row of X.
@@ -178,14 +189,19 @@ class LogisticRegressionperClass(BaseEstimator, ClassifierMixin):
             Logistic of X.
         """
 
-        X_ = np.zeros((X.shape[0], self.n_classes_))
-        for i in range(self.n_classes_):
-            X_[:, i] = np.dot(X[:, i * int(X.shape[1]/self.n_classes_): (i+1) * int(X.shape[1]/self.n_classes_)],
-                             self.weights_[i * int(X.shape[1]/self.n_classes_): (i+1) * int(X.shape[1]/self.n_classes_)])
+        n_samples, _ = X.shape
 
+        X_ = np.empty((n_samples, self.n_classes_))
+        old_ind = 0
+        for i, n in enumerate(self.n_weights_per_class):
+            new_ind = int(old_ind + n + 1)
+            X_[:, i] = np.dot(X[:, old_ind: new_ind], self.weights_[old_ind: new_ind])
+            old_ind = new_ind
 
         exp_X = np.exp(X_ - np.max(X_, axis=1).reshape(-1, 1))
-        return exp_X / (np.sum(exp_X, axis=1)).reshape((X.shape[0], 1))
+        softmax = exp_X / (np.sum(exp_X, axis=1)).reshape((n_samples, 1))
+
+        return softmax
 
     def get_weights(self):
         """ Returns the feature weights of the classifiers.
@@ -218,14 +234,19 @@ class LogisticRegressionperClass(BaseEstimator, ClassifierMixin):
         """
 
         # Input validation
-        X = check_array(X)
+        X = check_array(X, ensure_min_features=0)
 
-        # Ads the columns of 1s
-        X_ = np.ones((X.shape[0], 1))
-        for i in range(self.n_classes_):
-            aux = X[:, i * int(X.shape[1]/self.n_classes_): (i+1) * int(X.shape[1]/self.n_classes_)]
-            ones = np.ones((X.shape[0], 1))
+        n_samples, n_features = X.shape
+
+        # Ads n_classes columns of 1s (bias feature) to X
+        X_ = np.ones((n_samples, 1))
+        old_ind = 0
+        for n in self.n_weights_per_class:
+            new_ind = int(old_ind + n)
+            aux = X[:, old_ind: new_ind]
+            ones = np.ones((n_samples, 1))
             X_ = np.hstack([X_, aux, ones])
+            old_ind = new_ind
         X_ = X_[:, :-1]
 
         # Calculate probabilities
@@ -273,7 +294,7 @@ if __name__ == '__main__':
     X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.3, random_state=1)
 
     # Create and fit the Logistic Regression
-    logReg = LogisticRegressionperClass(l1=0.01, l2=0.01, n_iter=5, warm_start=False)
+    logReg = LogisticRegressionperClass(l1=0.01, l2=0.01, max_iter=5, warm_start=False)
     logReg.fit(X_train, y_train)
 
     # Make predictions

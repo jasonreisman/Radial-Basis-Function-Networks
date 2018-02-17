@@ -15,8 +15,7 @@ class GaussianMixture(object):
     This class allows to estimate the parameters of a Gaussian mixture
     distribution.
     It was created with the intention to use in the Radial Basis Function Networks package.
-    Keep in mind that some features were design with the objective to optimize the usage with
-    this package.
+
     Parameters
     ----------
     n_components : int, defaults to 1.
@@ -34,23 +33,20 @@ class GaussianMixture(object):
         defaults to False.
         If True when a prior of the gmm weights is 0 the corresponding
         component weight will be set entirely to 0.
+    n_comp_mixt : array, shape = [n_mixtures, ]
+        Number of features to be used by each parcell of the softmax.
+        Also number of weights per class.
     reg_covar : float, defaults to 1e-6.
         Non-negative regularization added to the diagonal of covariance.
         Allows to assure that the covariance matrices are all positive definite.
-    n_iter : int, defaults to 100.
-        The number of EM iterations to perform.
+    max_iter : int, defaults to 100.
+        The max number of EM iterations to perform.
     init_params : {'kmeans', 'random'}, defaults to 'kmeans'.
         The method used to initialize the weights, the means and the
         precisions.
         Must be one of:
             'kmeans' : responsibilities are initialized using kmeans.
             'random' : responsibilities are initialized randomly.
-    weights_init : array-like, shape (n_components, ), optional
-        The user-provided initial weights, defaults to None.
-        If it None, weights are initialized using the `init_params` method.
-    means_init : array-like, shape (n_components, n_features), optional
-        The user-provided initial means, defaults to None,
-        If it None, means are initialized using the `init_params` method.
     random_state : int, RandomState instance or None, optional (default=None)
         If int, random_state is the seed used by the random number generator;
         If RandomState instance, random_state is the random number generator;
@@ -74,17 +70,14 @@ class GaussianMixture(object):
     """
 
     def __init__(self, n_components=1, covariance_type='full', equal_covariances=False, gauss_kill=False,
-                 reg_covar=1e-6, n_iter=100, init_params='kmeans', weights_init=None, means_init=None,
-                 random_state=None, warm_start=False):
+                 reg_covar=1e-6, max_iter=100, init_params='kmeans', random_state=None, warm_start=False):
         self.n_components = n_components
         self.covariance_type = covariance_type
         self.equal_covariances = equal_covariances
         self.gauss_kill = gauss_kill
         self.reg_covar = reg_covar
-        self.n_iter = n_iter
+        self.max_iter = max_iter
         self.init_params = init_params
-        self.weights_init = weights_init
-        self.means_init = means_init
         self.random_state = random_state
         self.warm_start = warm_start
 
@@ -107,9 +100,6 @@ class GaussianMixture(object):
         """
 
         # Check parameters (Incomplete!)
-        if (prior_weights is not None) and ((prior_weights.size != self.n_components) or (any(weight <= 0 for weight in prior_weights))):
-            raise ValueError("Vector prior_weights must have lenght equal to n_components and be all positive; got (prior_weights = %r)"
-                             % prior_weights)
 
         # Check type parameter
         if self.covariance_type not in ['full', 'diag']:
@@ -121,20 +111,14 @@ class GaussianMixture(object):
         # If warm_start is false or the method has not been fit before, initialize the parameters.
         if (self.warm_start is False) or (hasattr(self, 'weights_') is False):
 
-            if self.weights_init != None:
-                self.weights_ = self.weights_init
-            else:
-                self.weights_ = np.ones(self.n_components) / self.n_components
+            self.weights_ = np.ones(self.n_components) / self.n_components
 
-            if self.means_init != None:
-                self.means_ = self.means_init
-            else:
-                if self.init_params == 'kmeans':
-                    kmeans = KMeans(n_clusters=self.n_components, random_state=self.random_state).fit(X)
-                    self.means_ = kmeans.cluster_centers_
+            if self.init_params == 'kmeans':
+                kmeans = KMeans(n_clusters=self.n_components, random_state=self.random_state).fit(X)
+                self.means_ = kmeans.cluster_centers_
 
-                elif self.init_params == 'random':
-                    self.means_ = X[np.random.randint(X.shape[0], size=self.n_components), :]
+            elif self.init_params == 'random':
+                self.means_ = X[np.random.randint(X.shape[0], size=self.n_components), :]
 
             if self.covariance_type == "full":
                 self.covariances_ = np.zeros((self.n_components, X.shape[1], X.shape[1]))
@@ -143,18 +127,23 @@ class GaussianMixture(object):
                 self.covariances_ = np.zeros((self.n_components, X.shape[1]))
                 self.covariances_[range(self.n_components), :] = np.ones(X.shape[1])
 
-
         self.prior_weights = prior_weights
-        # In case no dirichlet prior was passed then a uniform distribution is assumed and MLE calculated instead
-        if self.prior_weights is None:
-            self.prior_weights = np.ones(self.n_components)
 
+        for j in range(self.max_iter):
 
-        for j in range(self.n_iter):
+            if self.n_components == 0:
+                self.old_weights = self.weights_.copy()
+                break
+
 
             self.resp_ = self._e_step(X)
 
             self._m_step(X)
+
+            # Works only for when self.max_iter = 1
+            self.old_weights = self.weights_.copy()
+            if 0 in self.weights_:
+                self.del_0comp()
 
         return self
 
@@ -308,11 +297,14 @@ class GaussianMixture(object):
          -------
          weights : array, shape (n_components,)
          """
+        resp_components = np.sum(self.resp_, axis=0)
+        weights = resp_components.copy()
 
-        weights = np.sum(self.resp_, axis=0) + self.prior_weights - 1
-
-        if self.gauss_kill is True:
-            weights[self.prior_weights==1] = 0
+        if self.prior_weights is not None:
+            weights += self.prior_weights - 1
+            weights[resp_components == 0] = 0 # ignore prior if responsibility of component is 0
+            if self.gauss_kill is True:
+                weights[self.prior_weights == 1] = 0
 
         weights = weights / (np.sum(weights) + np.finfo(np.float64).eps)
 
@@ -331,6 +323,9 @@ class GaussianMixture(object):
         means = np.empty((self.n_components, X_dim))
 
         for i in range(self.n_components):
+            if self.weights_[i] == 0:
+                continue
+
             numerator = np.sum(X * self.resp_[:, i].reshape(-1, 1), axis=0)
             denominator = np.sum(self.resp_[:, i])
             means[i, :] = numerator / denominator
@@ -356,6 +351,9 @@ class GaussianMixture(object):
             covariances = np.empty((self.n_components, X_dim, X_dim))
             mean_cov = np.zeros((X_dim, X_dim))
             for i in range(self.n_components):
+                if self.weights_[i] == 0:
+                    continue
+
                 centered_X = (X - self.means_[i, :])
                 numerator = np.dot(centered_X.T, centered_X * self.resp_[:, i].reshape(-1, 1))
                 covariances[i, :, :] = numerator / np.sum(self.resp_[:, i])
@@ -369,6 +367,9 @@ class GaussianMixture(object):
             covariances = np.empty((self.n_components, X_dim))
             mean_cov = np.zeros(X_dim)
             for i in range(self.n_components):
+                if self.weights_[i] == 0:
+                    continue
+
                 centered_X = (X - self.means_[i, :])
                 numerator = np.sum(centered_X.T * (centered_X * self.resp_[:, i].reshape(-1, 1)).T, axis=1)
                 covariances[i, :] = numerator / np.sum(self.resp_[:, i])
@@ -379,8 +380,21 @@ class GaussianMixture(object):
             if self.equal_covariances is True:
                 covariances[range(self.n_components), :] = mean_cov
 
-
         return covariances
+
+    def del_0comp(self):
+
+        ind = np.argwhere(self.weights_ == 0)
+        self.n_components -= ind.size
+        self.weights_ = np.delete(self.weights_, ind)
+        self.means_ = np.delete(self.means_, ind, axis=0)
+        self.covariances_ = np.delete(self.covariances_, ind, axis=0)
+        self.resp_ = np.delete(self.resp_, ind, axis=1)
+
+        return
+
+
+
 
     def get_covariances(self):
 
@@ -432,7 +446,7 @@ if __name__ == '__main__':
         X[:N1, :] = np.random.multivariate_normal(mean=[0, 0], cov=[[7, -3], [-3, 8]], size=N1)
         X[N1:N1 + N2, :] = np.random.multivariate_normal(mean=[5, 5], cov=[[7, -3], [-3, 8]], size=N2)
 
-        gmm = GaussianMixture(n_components=2, covariance_type='diag', equal_covariances=False, reg_covar=1e-6, n_iter=100, init_params='kmeans',
+        gmm = GaussianMixture(n_components=2, covariance_type='diag', equal_covariances=False, reg_covar=1e-6, max_iter=100, init_params='kmeans',
                               weights_init=None, means_init=None, random_state=None, warm_start=True)
 
         gmm.fit(X, prior_weights=np.array([1,1]))

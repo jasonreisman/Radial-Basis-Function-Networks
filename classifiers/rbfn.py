@@ -90,20 +90,14 @@ class RadialBasisFunctionNetwork(BaseEstimator, ClassifierMixin):
     reg_covar : float, defaults to 1e-6.
         Non-negative regularization added to the diagonal of covariance.
         Allows to assure that the covariance matrices are all positive definite.
-    n_iter_gmm : int, defaults to 1.
-        The number of EM iterations to perform.
+    max_iter_gmm : int, defaults to 1.
+        The maximum number of EM iterations to perform.
     init_params : {'kmeans', 'random'}, defaults to 'kmeans'.
         The method used to initialize the weights, the means and the
         precisions.
         Must be one of::
             'kmeans' : responsibilities are initialized using kmeans.
             'random' : responsibilities are initialized randomly.
-    weights_init : array-like, shape (n_components, ), optional
-        The user-provided initial weights, defaults to None.
-        If it None, weights are initialized using the `init_params` method.
-    means_init : array-like, shape (n_components, n_features), optional
-        The user-provided initial means, defaults to None,
-        If it None, means are initialized using the `init_params` method.
     random_state : int, RandomState instance or None, optional (default=None)
         If int, random_state is the seed used by the random number generator;
         If RandomState instance, random_state is the random number generator;
@@ -117,7 +111,7 @@ class RadialBasisFunctionNetwork(BaseEstimator, ClassifierMixin):
     l2 : float, default: 0.01
         l2 regularization strength; must be a positive float.
         Bigger values specify stronger regularization.
-    n_iter_logreg : int, default: 1
+    max_iter_logreg : int, default: 1
         Number of iterations performed by the optimization algorithm
         in search for the optimal weights.
     Attributes
@@ -130,8 +124,8 @@ class RadialBasisFunctionNetwork(BaseEstimator, ClassifierMixin):
 
 
     def __init__(self, link=0, n_iter=100, n_components=5, feature_type='likelihood', covariance_type='full',
-                 equal_covariances=False, gauss_kill=False, reg_covar=1e-6, n_iter_gmm=1, init_params='kmeans', weights_init=None,
-                 means_init=None, random_state=None, l1=0.01, l2=0.01, n_iter_logreg=1):
+                 equal_covariances=False, gauss_kill=False, reg_covar=1e-6, max_iter_gmm=1, init_params='kmeans',
+                 random_state=None, l1=0.01, l2=0.01, max_iter_logreg=1):
         self.link = link
         self.n_iter = n_iter
         self.n_components = n_components
@@ -140,14 +134,12 @@ class RadialBasisFunctionNetwork(BaseEstimator, ClassifierMixin):
         self.equal_covariances = equal_covariances
         self.gauss_kill=gauss_kill
         self.reg_covar = reg_covar
-        self.n_iter_gmm = n_iter_gmm
+        self.max_iter_gmm = max_iter_gmm
         self.init_params = init_params
-        self.weights_init = weights_init
-        self.means_init = means_init
         self.random_state = random_state
         self.l1 = l1
         self.l2 = l2
-        self.n_iter_logreg = n_iter_logreg
+        self.max_iter_logreg = max_iter_logreg
 
     def fit(self, X, y):
         """Fit a Radial Basis Function Network classifier to the training data.
@@ -190,52 +182,68 @@ class RadialBasisFunctionNetwork(BaseEstimator, ClassifierMixin):
         self.X_ = X
         self.y_ = y
 
+        n_samples, n_features = self.X_.shape
+
         self.gmm_ = []
         for i in range(self.n_classes_):
             self.gmm_.append(GaussianMixture(n_components=self.n_components, covariance_type=self.covariance_type,
                                              equal_covariances=self.equal_covariances, gauss_kill=self.gauss_kill, reg_covar=self.reg_covar,
-                                             n_iter=self.n_iter_gmm, init_params=self.init_params,
-                                             weights_init=self.weights_init, means_init=self.means_init,
+                                             max_iter=self.max_iter_gmm, init_params=self.init_params,
                                              random_state=self.random_state, warm_start=True))
 
+        self.logReg_ = LogisticRegressionperClass(l1=self.l1, l2=self.l2, max_iter=self.max_iter_logreg, warm_start=True)
 
-#        self.logReg_ = LogisticRegression(penalty='l2',  tol=1e-10, C=1.0/self.l, solver='sag',
-#                                          max_iter=self.n_iter_logreg, multi_class='multinomial', warm_start=True)
-        self.logReg_ = LogisticRegressionperClass(l1=self.l1, l2=self.l2, n_iter=self.n_iter_logreg, warm_start=True)
-
-
-        # design_matrix with shape (n_samples, number of total components in all the gmms), there are n_classes mixtures
-        design_matrix = np.empty((self.X_.shape[0], self.n_classes_ * self.n_components))
-        priors = np.ones((self.n_classes_, self.n_components))
+        priors = [None] * self.n_classes_
         for j in range(self.n_iter):
+
+            design_matrix = np.array([]).reshape(n_samples, 0)
+            n_comp_mixt = np.array([])
+            weights2kill = np.array([])
 
             if self.feature_type == 'post_prob':
                 for i in range(self.n_classes_):
-                    self.gmm_[i] = self.gmm_[i].fit(X=self.X_, prior_weights=priors[i, :])
-                    design_matrix[:, i * self.n_components: (i + 1) * self.n_components] = self.gmm_[i].resp_
+                    self.gmm_[i] = self.gmm_[i].fit(X=self.X_, prior_weights=priors[i])
+
+                    design_matrix = np.append(design_matrix, self.gmm_[i].resp_, axis=1)
+                    n_comp_mixt = np.append(n_comp_mixt, self.gmm_[i].n_components)
+                    weights2kill = np.append(weights2kill, self.gmm_[i].old_weights)
 
             elif self.feature_type == 'likelihood':
                 for i in range(self.n_classes_):
-                    self.gmm_[i] = self.gmm_[i].fit(X=self.X_, prior_weights=priors[i, :])
-                    design_matrix[:, i * self.n_components: (i + 1) * self.n_components] = \
-                        self.predict_likelihoods(X, self.gmm_[i].means_, self.gmm_[i].covariances_, type='norm')
+                    self.gmm_[i] = self.gmm_[i].fit(X=self.X_, prior_weights=priors[i])
+                    if self.gmm_[i].n_components != 0:
+                        design_matrix = np.append(design_matrix, self.predict_likelihoods(X, self.gmm_[i].means_,
+                                                                        self.gmm_[i].covariances_, type='norm'), axis=1)
+
+                    n_comp_mixt = np.append(n_comp_mixt, self.gmm_[i].n_components)
+                    weights2kill = np.append(weights2kill, self.gmm_[i].old_weights)
 
             elif self.feature_type == 'log_likelihood':
                 for i in range(self.n_classes_):
-                    self.gmm_[i] = self.gmm_[i].fit(X=self.X_, prior_weights=priors[i, :])
-                    design_matrix[:, i * self.n_components: (i + 1) * self.n_components] = \
-                        self.predict_likelihoods(X, self.gmm_[i].means_, self.gmm_[i].covariances_, type='log')
+                    self.gmm_[i] = self.gmm_[i].fit(X=self.X_, prior_weights=priors[i])
+                    if self.gmm_[i].n_components != 0:
+                        design_matrix = np.append(design_matrix, self.predict_likelihoods(X, self.gmm_[i].means_,
+                                                                        self.gmm_[i].covariances_, type='log'), axis=1)
+
+                    n_comp_mixt = np.append(n_comp_mixt, self.gmm_[i].n_components)
+                    weights2kill = np.append(weights2kill, self.gmm_[i].old_weights)
 
             elif self.feature_type == 'proj_log_likelihood':
                 for i in range(self.n_classes_):
-                    self.gmm_[i] = self.gmm_[i].fit(X=self.X_, prior_weights=priors[i, :])
-                    likelihoods = self.predict_likelihoods(X, self.gmm_[i].means_, self.gmm_[i].covariances_, type='log')
-                    design_matrix[:, i * self.n_components: (i + 1) * self.n_components] = simplex_proj(likelihoods)
+                    self.gmm_[i] = self.gmm_[i].fit(X=self.X_, prior_weights=priors[i])
+                    if self.gmm_[i].n_components != 0:
+                        likelihoods = self.predict_likelihoods(X, self.gmm_[i].means_, self.gmm_[i].covariances_,
+                                                               type='log')
+                        design_matrix = np.append(design_matrix, simplex_proj(likelihoods), axis=1)
 
-            self.logReg_ = self.logReg_.fit(design_matrix, self.y_)
+                    n_comp_mixt = np.append(n_comp_mixt, self.gmm_[i].n_components)
+                    weights2kill = np.append(weights2kill, self.gmm_[i].old_weights)
+
+            self.logReg_ = self.logReg_.fit(design_matrix, self.y_, n_comp_mixt, weights2kill)
+            pass
 
             if self.link != 0:
-                priors = self.calculate_priors(self.logReg_.weights_)
+                priors = self.calculate_priors(self.logReg_.weights_, n_comp_mixt)
 
         # Return the classifier
         return self
@@ -323,25 +331,41 @@ class RadialBasisFunctionNetwork(BaseEstimator, ClassifierMixin):
         # Check is fit had been called
         check_is_fitted(self, 'gmm_')
 
-        design_matrix = np.zeros((X.shape[0], self.n_classes_ * self.n_components))
+        n_samples, n_features = X.shape
+
+        design_matrix = np.array([]).reshape(n_samples, 0)
         if self.feature_type == 'post_prob':
             for i in range(self.n_classes_):
-                design_matrix[:, i * self.n_components: (i + 1) * self.n_components] = self.gmm_[i].predict_proba(X)
+                if self.gmm_[i].n_components == 0:
+                    continue
+
+                design_matrix = np.append(design_matrix, self.gmm_[i].predict_proba(X), axis=1)
 
         if self.feature_type == 'likelihood':
             for i in range(self.n_classes_):
-                design_matrix[:, i * self.n_components: (i + 1) * self.n_components] = \
-                    self.predict_likelihoods(X, self.gmm_[i].means_, self.gmm_[i].covariances_, type='norm')
+                if self.gmm_[i].n_components == 0:
+                    continue
+
+                design_matrix = np.append(design_matrix,
+                                          self.predict_likelihoods(X, self.gmm_[i].means_, self.gmm_[i].covariances_,
+                                                                   type='norm'), axis=1)
 
         if self.feature_type == 'log_likelihood':
             for i in range(self.n_classes_):
-                design_matrix[:, i * self.n_components: (i + 1) * self.n_components] = \
-                    self.predict_likelihoods(X, self.gmm_[i].means_, self.gmm_[i].covariances_, type='log')
+                if self.gmm_[i].n_components == 0:
+                    continue
+
+                design_matrix = np.append(design_matrix,
+                                          self.predict_likelihoods(X, self.gmm_[i].means_, self.gmm_[i].covariances_,
+                                                                   type='log'), axis=1)
 
         if self.feature_type == 'proj_log_likelihood':
             for i in range(self.n_classes_):
+                if self.gmm_[i].n_components == 0:
+                    continue
+
                 likelihoods = self.predict_likelihoods(X, self.gmm_[i].means_, self.gmm_[i].covariances_, type='log')
-                design_matrix[:, i * self.n_components: (i + 1) * self.n_components] = simplex_proj(likelihoods)
+                design_matrix = np.append(design_matrix, simplex_proj(likelihoods), axis=1)
 
         probs = self.logReg_.predict_proba(design_matrix)
         return probs
@@ -364,50 +388,74 @@ class RadialBasisFunctionNetwork(BaseEstimator, ClassifierMixin):
         # Check is fit had been called
         check_is_fitted(self, 'gmm_')
 
-        design_matrix = np.zeros((X.shape[0], self.n_classes_ * self.n_components))
+        n_samples, n_features = X.shape
+
+        design_matrix = np.array([]).reshape(n_samples, 0)
         if self.feature_type == 'post_prob':
             for i in range(self.n_classes_):
-                design_matrix[:, i * self.n_components: (i + 1) * self.n_components] = self.gmm_[i].predict_proba(X)
+                if self.gmm_[i].n_components == 0:
+                    continue
+
+                design_matrix = np.append(design_matrix, self.gmm_[i].predict_proba(X), axis=1)
 
         if self.feature_type == 'likelihood':
             for i in range(self.n_classes_):
-                design_matrix[:, i * self.n_components: (i + 1) * self.n_components] = \
-                    self.predict_likelihoods(X, self.gmm_[i].means_, self.gmm_[i].covariances_, type='norm')
+                if self.gmm_[i].n_components == 0:
+                    continue
+
+                design_matrix = np.append(design_matrix,
+                                          self.predict_likelihoods(X, self.gmm_[i].means_, self.gmm_[i].covariances_,
+                                                                   type='norm'), axis=1)
 
         if self.feature_type == 'log_likelihood':
             for i in range(self.n_classes_):
-                design_matrix[:, i * self.n_components: (i + 1) * self.n_components] = \
-                    self.predict_likelihoods(X, self.gmm_[i].means_, self.gmm_[i].covariances_, type='log')
+                if self.gmm_[i].n_components == 0:
+                    continue
+
+                design_matrix = np.append(design_matrix,
+                                          self.predict_likelihoods(X, self.gmm_[i].means_, self.gmm_[i].covariances_,
+                                                                   type='log'), axis=1)
 
         if self.feature_type == 'proj_log_likelihood':
             for i in range(self.n_classes_):
+                if self.gmm_[i].n_components == 0:
+                    continue
+
                 likelihoods = self.predict_likelihoods(X, self.gmm_[i].means_, self.gmm_[i].covariances_, type='log')
-                design_matrix[:, i * self.n_components: (i + 1) * self.n_components] = simplex_proj(likelihoods)
+                design_matrix = np.append(design_matrix, simplex_proj(likelihoods), axis=1)
 
         y = self.logReg_.predict(design_matrix)
         return y
 
 
 
-    def calculate_priors(self, logReg_weights):
+    def calculate_priors(self, logReg_weights, n_weights_per_class):
         """ Calculates the priors to be passed to the GMM.
         The log reg weights are normalized and scales by the link parameter
             Parameters
             ----------
             logReg_weights :  array, shape (n_features, )
                 Coefficient of the features in the decision function.
+
+            n_weights_per_class : array-like, shape = (n_classes,)
+                Number of weights for each class.
+                The sum of ths vector is the total number of variables.
+
             Returns
             -------
             priors : array, shape (n_classes, n_components)
                 Dirichlet priors for the GMM.
             """
 
-        priors = np.ones((self.n_classes_, self.n_components))
+        priors = []
         logReg_weights_abs = np.absolute(logReg_weights)
 
-        for i in range(self.n_classes_):
-            prior_temp = logReg_weights_abs[i * int(logReg_weights.size/self.n_classes_): (i+1) * int(logReg_weights.size/self.n_classes_)][1:]
-            priors[i, :] = priors[i, :] + self.link * (prior_temp / (np.sum(prior_temp) + np.finfo(np.float64).eps))
+        old_ind = 1
+        for n in n_weights_per_class:
+            new_ind = int(old_ind + n)
+            prior_temp = logReg_weights_abs[old_ind: new_ind]
+            priors = priors + [1.0 + self.link * (prior_temp / (np.sum(prior_temp) + np.finfo(np.float64).eps))]
+            old_ind = new_ind + 1
 
         return priors
 
@@ -416,14 +464,14 @@ if __name__ == '__main__':
     from sklearn import datasets
     from sklearn.metrics import accuracy_score
     from sklearn.model_selection import train_test_split
-    from scipy.io import loadmat
+    import scipy.io as io
 
     def evaluate(X_train, X_test, y_train, y_test):
         # Create and fit the Logistic Regression
-        rbfn = RadialBasisFunctionNetwork(link=100, n_iter=1000, n_components=3, covariance_type='full',
-                                          equal_covariances=False, feature_type='post_prob', gauss_kill=True,
-                                          reg_covar=1e-6, n_iter_gmm=1, init_params='kmeans', weights_init=None,
-                                          means_init=None, random_state=None, l1=1, l2=0.01, n_iter_logreg=15000)
+        rbfn = RadialBasisFunctionNetwork(link=100, n_iter=10, n_components=2, covariance_type='diag',
+                                          equal_covariances=False, feature_type='proj_log_likelihood', gauss_kill=True,
+                                          reg_covar=1e-6, max_iter_gmm=1, init_params='kmeans', random_state=None,
+                                          l1=0.01, l2=0.01, max_iter_logreg=15000)
         bef = time.time()
         rbfn.fit(X_train, y_train)
         now = time.time()
@@ -518,29 +566,26 @@ if __name__ == '__main__':
 
         evaluate(X_train, X_test, y_train, y_test)
 
-        def orl():
-            np.random.seed(1)
-            filename = '/home/joao/Documents/Thesis/Radial_Basis_Funtion_Networks/datasets/ORL.mat'
-            data = loadmat(filename)
-            X = df.values.T
-            filename = '/home/joao/Documents/Thesis/Radial_Basis_Funtion_Networks/datasets/colon_target.csv'
-            y = np.zeros(df.columns.size)
-            for ind, i in enumerate(df.columns):
-                if 'AML' in i:
-                    y[ind] = 1
+    def orl():
+        file = "/home/joao/Documents/Thesis/Radial_Basis_Funtion_Networks/datasets/ORL"
+        data = io.loadmat(file)
+        X_ = np.array(data['fea'], dtype=np.float64)
+        X = np.array([]).reshape(0, int(X_.size / 400))
+        for x in np.split(X_, 400):
+            X = np.append(X, x, axis=0)
+        y = np.asarray(data['gnd'], dtype=np.float64).ravel()
 
-            # Divide in train and test
-            X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.46)
+        # Divide in train and test
+        X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.5)
 
-            evaluate(X_train, X_test, y_train, y_test)
+        evaluate(X_train, X_test, y_train, y_test)
 
     #iris()
     #wbdc()
     #glass()
     #sonar()
-    wine()
+    #wine()
     #colon()
     #leukemia()
+    orl()
 
-    # For nans
-    # wine - link=100, n_iter=1000, n_components=3, covariance_type='full', equal_covariances=False, feature_type='post_prob', gauss_kill=True,reg_covar=1e-6, n_iter_gmm=1, init_params='kmeans', weights_init=None,means_init=None, random_state=None, l1=1, l2=0.01, n_iter_logreg=15000
