@@ -40,11 +40,11 @@ class OneHotEncoder(object):
 
          Returns
          -------
-         X : {array-like, sparse matrix}, shape (n_samples, n_unique_labels-1)
+         X : {array-like, sparse matrix}, shape (n_samples, n_unique_labels)
              One hot encoded vector x.
          """
 
-        # x_tranformed converts the labels from 0 to n_unique_labels-1
+        # x_tranformed converts the labels from 0 to n_unique_labels
         x_transformed = np.zeros(x.size, dtype=int)
         for i in range(x.size):
             x_transformed[i] = self.mapping_[x[i]]
