@@ -63,8 +63,8 @@ class RadialBasisFunctionNetwork(BaseEstimator, ClassifierMixin):
         Scales the Dirichlet priors created from the log reg weights.
         0 : no prior.
         (>>1) : basically only prior used.
-    n_iter : int, defaults to 100
-        Number of iterations performed in method fit.
+    max_iter : int, defaults to 1000
+        Maximum number of iterations performed in method fit.
 
     (for the Gaussian Mixture Models)
     n_components : int, defaults to 2.
@@ -92,13 +92,20 @@ class RadialBasisFunctionNetwork(BaseEstimator, ClassifierMixin):
         defaults to False.
         If True when a prior of the gmm weights is 0 the corresponding
         component weight will be set entirely to 0.
-    categorical_features : array type, shape (n_categorical_features,), default = None
+    ind_cat_features : array type, shape (n_cat_features,), default = None
         array with the indexes of the categorical features.
+    cat_features : list of lists, default = None
+        The inner lists contain the categories for each categorical variable.
+        Must be in the same data type as passed in X.
     laplace_smoothing : float, defalt = 0.01
         Constant responsible for the laplace smoothing in the MAP estimation of the categorical weights.
     reg_covar : float, defaults to 1e-6.
         Non-negative regularization added to the diagonal of covariance.
         Allows to assure that the covariance matrices are all positive definite.
+    tol : float, optional (default=1e-3)
+        Tolerance for stopping criterion.
+        Calculate the differences between two consecutive design_matrices,
+        if the biggest feature norm of the difference is bellow this value stop.
     max_iter_gmm : int, defaults to 1.
         The maximum number of EM iterations to perform.
     init_params : {'kmeans', 'random'}, defaults to 'kmeans'.
@@ -132,20 +139,22 @@ class RadialBasisFunctionNetwork(BaseEstimator, ClassifierMixin):
     """
 
 
-    def __init__(self, link=0, n_iter=100, n_components=5, feature_type='likelihood', covariance_type='full',
-                 equal_covariances=False, component_kill=False, categorical_features=[], laplace_smoothing=0.001,
-                 reg_covar=1e-6, max_iter_gmm=1, init_params='kmeans', random_state=None, l1=0.01, l2=0.01,
+    def __init__(self, link=0, max_iter=1000, n_components=5, feature_type='likelihood', covariance_type='full',
+                 equal_covariances=False, component_kill=False, ind_cat_features=[], cat_features=None, laplace_smoothing=0.001,
+                 reg_covar=1e-6, tol=1e-3, max_iter_gmm=1, init_params='kmeans', random_state=None, l1=0.01, l2=0.01,
                  max_iter_logreg=1):
         self.link = link
-        self.n_iter = n_iter
+        self.max_iter = max_iter
         self.n_components = n_components
         self.feature_type = feature_type
         self.covariance_type = covariance_type
         self.equal_covariances = equal_covariances
         self.component_kill = component_kill
-        self.categorical_features = categorical_features
+        self.ind_cat_features = ind_cat_features
+        self.cat_features = cat_features
         self.laplace_smoothing = laplace_smoothing
         self.reg_covar = reg_covar
+        self.tol = tol
         self.max_iter_gmm = max_iter_gmm
         self.init_params = init_params
         self.random_state = random_state
@@ -196,25 +205,31 @@ class RadialBasisFunctionNetwork(BaseEstimator, ClassifierMixin):
 
         n_samples, n_features = X.shape
 
-        self.categorical_features = np.array(self.categorical_features)
-        self.real_features = np.delete(np.arange(n_features), self.categorical_features)
+        self.ind_cat_features = np.array(self.ind_cat_features)
+        self.real_features = np.delete(np.arange(n_features), self.ind_cat_features)
 
         self.X_real = X[:, self.real_features]
         self.X_categorical_1hot = np.array([]).reshape((n_samples, 0))
         self.onehot_encoders = []
         self.n_categories = np.array([])
-        for i in self.categorical_features:
-            oneHot = OneHotEncoder().fit(X[:, i])
+        for ind, i in enumerate(self.ind_cat_features):
+            if self.cat_features is not None:
+                categories = self.cat_features[ind]
+            else:
+                categories = None
+            oneHot = OneHotEncoder().fit(X[:, i], categories)
             self.onehot_encoders.append(oneHot)
             oneHotTrans = oneHot.transform(X[:, i])
             self.n_categories = np.append(self.n_categories, oneHotTrans.shape[1])
             self.X_categorical_1hot = np.append(self.X_categorical_1hot, oneHotTrans, axis=1)
 
         self.n_real_features = self.real_features.size
-        self.n_categorical_features = self.categorical_features.size
+        self.n_cat_features = self.ind_cat_features.size
 
         self.X_real = check_array(self.X_real, ensure_min_features=0)
         self.X_categorical_1hot = check_array(self.X_categorical_1hot, ensure_min_features=0)
+
+        old_design_matrix = np.ones((sum(supervised_ind), self.n_components * self.n_classes_)) * np.inf
 
         self.mm_ = []
         for i in range(self.n_classes_):
@@ -228,7 +243,7 @@ class RadialBasisFunctionNetwork(BaseEstimator, ClassifierMixin):
         self.logReg_ = LogisticRegressionperClass(l1=self.l1, l2=self.l2, max_iter=self.max_iter_logreg, warm_start=True)
 
         priors = [None] * self.n_classes_
-        for j in range(self.n_iter):
+        for j in range(self.max_iter):
 
             design_matrix = np.array([]).reshape(sum(supervised_ind), 0)
             n_comp_mixt = np.array([])
@@ -278,6 +293,17 @@ class RadialBasisFunctionNetwork(BaseEstimator, ClassifierMixin):
                     n_comp_mixt = np.append(n_comp_mixt, self.mm_[i].n_components)
                     weights2kill = np.append(weights2kill, self.mm_[i].old_weights)
 
+            # Check stop criterion
+            ind = np.argwhere(weights2kill == 0)
+            aux = old_design_matrix[:, ind].reshape(design_matrix.shape[0], -1)
+            aux = np.hstack((aux, old_design_matrix - design_matrix))
+            norms = np.linalg.norm(aux, axis=0)
+            if np.max(norms) < self.tol:
+                break
+
+            old_design_matrix = design_matrix
+
+
             self.logReg_ = self.logReg_.fit(design_matrix, self.y_, n_comp_mixt, weights2kill)
 
             if self.link != 0:
@@ -292,7 +318,7 @@ class RadialBasisFunctionNetwork(BaseEstimator, ClassifierMixin):
         ----------
         X_real : array-like of shape = [n_samples, n_real_features]
             The input real samples.
-        X_categorical_1hot : array-like of shape = [n_samples, n_categorical_features]
+        X_categorical_1hot : array-like of shape = [n_samples, n_cat_features]
             The input categorical samples one-hot encoded.
         mm : type object
             mixture model with atributes:
@@ -374,7 +400,7 @@ class RadialBasisFunctionNetwork(BaseEstimator, ClassifierMixin):
 
         X_real = X[:, self.real_features]
         X_categorical_1hot = np.array([]).reshape((X.shape[0], 0))
-        for ind, n in enumerate(self.categorical_features):
+        for ind, n in enumerate(self.ind_cat_features):
             oneHotTrans = self.onehot_encoders[ind].transform(X[:, n])
             X_categorical_1hot = np.append(X_categorical_1hot, oneHotTrans, axis=1)
 
@@ -441,7 +467,7 @@ class RadialBasisFunctionNetwork(BaseEstimator, ClassifierMixin):
 
         X_real = X[:, self.real_features]
         X_categorical_1hot = np.array([]).reshape((X.shape[0], 0))
-        for ind, n in enumerate(self.categorical_features):
+        for ind, n in enumerate(self.ind_cat_features):
             oneHotTrans = self.onehot_encoders[ind].transform(X[:, n])
             X_categorical_1hot = np.append(X_categorical_1hot, oneHotTrans, axis=1)
 
@@ -527,13 +553,13 @@ if __name__ == '__main__':
     def evaluate(X_train, X_test, y_train, y_test):
         # Create and fit the Logistic Regression
 
-        rbfn = RadialBasisFunctionNetwork(link=100, n_iter=100, n_components=2, feature_type='post_prob', covariance_type='full',
-                 equal_covariances=False, component_kill=True, categorical_features=[], laplace_smoothing=0.001,
+        rbfn = RadialBasisFunctionNetwork(link=100, max_iter=1000, tol=1e-3, n_components=3, feature_type='post_prob', covariance_type='full',
+                 equal_covariances=False, component_kill=True, ind_cat_features=[], laplace_smoothing=0.001,
                  reg_covar=1e-6, max_iter_gmm=1, init_params='kmeans', random_state=None, l1=0.01, l2=0.01,
                  max_iter_logreg=1)
 
-        # rbfn = RadialBasisFunctionNetwork(link=100, n_iter=10, n_components=3, feature_type='post_prob', covariance_type='full',
-        #          equal_covariances=False, component_kill=False, categorical_features=[0,2,5,6,7], laplace_smoothing=0.001,
+        # rbfn = RadialBasisFunctionNetwork(link=100, max_iter=10, n_components=3, feature_type='post_prob', covariance_type='full',
+        #          equal_covariances=False, component_kill=False, ind_cat_features=[0,2,5,6,7], laplace_smoothing=0.001,
         #          reg_covar=1e-6, max_iter_gmm=1, init_params='kmeans', random_state=None, l1=0.01, l2=0.01,
         #          max_iter_logreg=1)
 
@@ -567,7 +593,7 @@ if __name__ == '__main__':
         X = df.drop([0,1], axis=1).values
         # Divide in train and test
         X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.5)
-        y_train[0:280] = -1
+        #y_train[0:280] = -1
         evaluate(X_train, X_test, y_train, y_test)
 
     def glass():
@@ -654,19 +680,36 @@ if __name__ == '__main__':
         X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2)
         evaluate(X_train, X_test, y_train, y_test)
 
-    def histpopindex():
+    def histpopindex(): # with categories
         filename = '/home/joao/Documents/Thesis/Radial_Basis_Funtion_Networks/datasets/HistoricalPopularityIndex.csv'
         df = pd.read_csv(filename)
         df = df.dropna(axis=0)
         y = df['continent'].values
         df = df.drop(df.columns[[0, 1, 4, 5, 7]], axis=1)
         X = df.values
-        X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.1, random_state=6)
-        evaluate(X_train, X_test, y_train, y_test)
+        cat_features = None#[np.unique(X[:, 0]), np.unique(X[:, 2]), np.unique(X[:, 5]), np.unique(X[:, 6]), np.unique(X[:, 7])]
+        X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.5, random_state=6)
+
+        rbfn = RadialBasisFunctionNetwork(link=100, max_iter=10, n_components=3, feature_type='post_prob', covariance_type='full',
+                 equal_covariances=False, component_kill=False, ind_cat_features=[0,2,5,6,7], cat_features=cat_features, laplace_smoothing=0.001,
+                 reg_covar=1e-6, max_iter_gmm=1, init_params='kmeans', random_state=None, l1=0.01, l2=0.01,
+                 max_iter_logreg=1)
+
+        bef = time.time()
+        rbfn.fit(X_train, y_train)
+        now = time.time()
+        print(now - bef)
+
+        # Make predictions
+        #        y_pred_prob = rbfn.predict_proba(X_test)
+        y_pred = rbfn.predict(X_test)
+        accuracy = accuracy_score(y_test, y_pred)
+        print(accuracy)
+        pass
 
 
     #iris()
-    wbdc()
+    #wbdc()
     #glass()
     #sonar()
     #wine()
@@ -674,5 +717,5 @@ if __name__ == '__main__':
     #leukemia()
     #orl()
     #balance_scale()
-    #histpopindex()
+    histpopindex()
 

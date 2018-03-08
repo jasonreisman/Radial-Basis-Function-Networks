@@ -10,21 +10,26 @@ class OneHotEncoder(object):
     def __init__(self):
         pass
 
-    def fit(self, x):
+    def fit(self, x, labels=None):
         """Fit the encoding. Creates two dictionaries that encapsulate the forward and backwards mappings.
 
-         Parameters
-         ----------
-         x : array-like, shape (n_samples,)
-             Vector that contains the elements for which the mappings will be made.
+        Parameters
+        ----------
+        x : array-like, shape (n_samples,)
+            Vector that contains the elements for which the mappings will be made.
+        labels : list, shape (n_labels,)
+            List containing the labels of the vector  ADICIONAR ISTO AO RBFN!!!!!!!!!!!!!!!!!
 
          Returns
          -------
          self : object
              Returns self.
          """
+        if labels is None:
+            self.unique_labels_ = unique_labels(x)
+        else:
+            self.unique_labels_ = labels
 
-        self.unique_labels_ = unique_labels(x)
         self.mapping_ = {label: i for i, label in enumerate(self.unique_labels_)}
         self.inverted_mapping_ = dict([[v, k] for k, v in self.mapping_.items()])
 
