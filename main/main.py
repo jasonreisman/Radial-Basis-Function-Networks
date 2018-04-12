@@ -7,7 +7,7 @@ from sklearn.metrics import accuracy_score
 from matplotlib.patches import Ellipse
 
 from classifiers.rbfn import RadialBasisFunctionNetwork
-from classifiers.logisitc_regression import LogisticRegression
+#from classifiers.logisitc_regression import LogisticRegression
 from mixtures.gmm import GaussianMixture
 from sklearn.metrics import log_loss
 
@@ -17,8 +17,6 @@ def log_reg_log_loss(y_true, y_pred, C, coef, intercept=np.array([0])):
     loss = loss + (1 / (2 * C)) * (np.sum(np.square(intercept)) + np.sum(np.square(coef)))
 
     return loss
-
-
 
 # returns an Ellipse object when given a center and covariance matrix
 def get_ellipse(mean, cov):

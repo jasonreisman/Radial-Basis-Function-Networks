@@ -83,7 +83,6 @@ class LogisticRegressionperClass(BaseEstimator, ClassifierMixin):
                              % self.max_iter)
 
         # Check that X and y have correct shape
-
         X, y = check_X_y(X, y, ensure_min_features=0)
 
 
