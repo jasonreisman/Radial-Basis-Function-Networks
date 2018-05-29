@@ -1,5 +1,6 @@
 import numbers
 import time
+import multiprocessing
 
 import numpy as np
 import pandas as pd
@@ -10,6 +11,7 @@ from sklearn.utils.multiclass import check_classification_targets
 from sklearn.utils import compute_class_weight
 from sklearn.utils.multiclass import unique_labels
 from scipy.stats import multivariate_normal
+from sklearn.decomposition import PCA
 
 from classifiers.mult_log_reg_per_class import LogisticRegressionperClass
 #from classifiers.mult_log_reg_per_class_BFGS import LogisticRegressionperClass
@@ -21,6 +23,18 @@ from utils.one_hot_encoder import OneHotEncoder
 
 from utils.stats import mult_gauss_pdf, log_multivariate_normal_density_diag, log_multivariate_normal_density_full
 
+
+def _job(p):
+    mm = p[0]
+    X_real = p[1]
+    X_categorical_1hot = p[2]
+    n_categories = p[3]
+    prior_weights = p[4]
+
+    mm = mm.fit(X_real=X_real, X_categorical_1hot=X_categorical_1hot, n_categories=n_categories,
+                prior_weights=prior_weights)
+
+    return mm
 
 def simplex_proj(z):
     """Projectets rows of z in the simplex.
@@ -49,6 +63,16 @@ def simplex_proj(z):
     tau_z = ((tau_sum - 1) / k_z).reshape(-1, 1)
 
     return np.maximum(0, z - tau_z)
+
+def unique_classes(y):
+
+    unique = []
+    for i in y:
+        if i not in unique and i != -1:
+            unique.append(i)
+
+    return np.array(unique)
+
 
 class RadialBasisFunctionNetwork(BaseEstimator, ClassifierMixin):
     """ Implements a Radial Basis Function Network classifier.
@@ -85,7 +109,7 @@ class RadialBasisFunctionNetwork(BaseEstimator, ClassifierMixin):
     (for the Gaussian Mixture Models)
     n_components : int, defaults to 2.
         The number of mixture components.
-    feature_type : string, default to 'likelihoods'
+    feature_type : string, default to 'post_prob'
         Must be one of:
             'likelihood' (design matrix passed to the Logistic Regression
                 are the likelihoods of the samples of each mixture),
@@ -105,7 +129,7 @@ class RadialBasisFunctionNetwork(BaseEstimator, ClassifierMixin):
             defaults to False.
             If True in each mixture every component has the same covariance.
     component_kill : {True, False},
-        defaults to False.
+        defaults to True.
         If True when a prior of the gmm weights is 0 the corresponding
         component weight will be set entirely to 0.
     laplace_smoothing : float, defalt = 0.01
@@ -129,7 +153,7 @@ class RadialBasisFunctionNetwork(BaseEstimator, ClassifierMixin):
     l2 : float, default: 0.01
         l2 regularization strength; must be a positive float.
         Bigger values specify stronger regularization.
-    max_iter_logreg : int, default: 1
+    max_iter_logreg : int, default: 5
         Number of iterations performed by the optimization algorithm
         in search for the optimal weights.
     Attributes
@@ -141,10 +165,10 @@ class RadialBasisFunctionNetwork(BaseEstimator, ClassifierMixin):
     """
 
 
-    def __init__(self, link=0, max_iter=1000, tol=1e-3, n_components=5, feature_type='likelihood', covariance_type='full',
-                 equal_covariances=False, component_kill=False, ind_cat_features=(), cat_features=None, laplace_smoothing=0.001,
+    def __init__(self, link=0, max_iter=1000, tol=1e-3, n_components=5, feature_type='post_prob', covariance_type='full',
+                 equal_covariances=False, component_kill=True, ind_cat_features=(), cat_features=None, laplace_smoothing=0.001,
                  reg_covar=1e-6, max_iter_gmm=1, init_params='kmeans', random_state=None, l1=0.01, l2=0.01,
-                 max_iter_logreg=1):
+                 max_iter_logreg=5):
         self.link = link
         self.max_iter = max_iter
         self.tol = tol
@@ -179,11 +203,15 @@ class RadialBasisFunctionNetwork(BaseEstimator, ClassifierMixin):
         """
 
         # Check that X and y have correct shape
-        X, y = check_X_y(X, y, dtype=np.float64)#, dtype=None)
+        X, y = check_X_y(X, y, dtype=None)#, dtype=float64)
         y = column_or_1d(y, warn=True)
-        check_classification_targets(y)
+        #check_classification_targets(y)
 
-        self.classes_, _ = np.unique(y, return_inverse=True)
+        #self.classes_, _ = np.unique(y, return_inverse=False)
+
+        #i, = np.where(self.classes_ == -1)
+        #self.classes_ = np.delete(self.classes_, i)
+        self.classes_ = unique_classes(y)
 
         supervised_ind = []  # boolean vector that indicates if a sample has label
         for i in range(y.size):
@@ -195,6 +223,7 @@ class RadialBasisFunctionNetwork(BaseEstimator, ClassifierMixin):
 
         # Store the number of classes
         self.n_classes_ = self.classes_.size
+
 
         # Check link parameter
         if not isinstance(self.link, numbers.Number) or self.link < 0:
@@ -259,10 +288,24 @@ class RadialBasisFunctionNetwork(BaseEstimator, ClassifierMixin):
             n_comp_mixt = np.array([])
             weights2kill = np.array([])
 
+            # For parelelization
+            # params = []
+            # for i in range(self.n_classes_):
+            #
+            #     params.append([self.mm_[i], self.X_real_, self.X_categorical_1hot_, self.n_categories_, priors[i]])
+            #
+            # pool = multiprocessing.Pool(2)
+            # self.mm_ = pool.map(_job, params)
+            # pool.close()
+
+            for i in range(self.n_classes_):
+                 self.mm_[i] = self.mm_[i].fit(X_real=self.X_real_, X_categorical_1hot=self.X_categorical_1hot_,
+                                               n_categories=self.n_categories_, prior_weights=priors[i])
+
+
+
             if self.feature_type == 'post_prob':
                 for i in range(self.n_classes_):
-                    self.mm_[i] = self.mm_[i].fit(X_real=self.X_real_, X_categorical_1hot=self.X_categorical_1hot_,
-                                                  n_categories=self.n_categories_, prior_weights=priors[i])
 
                     design_matrix = np.append(design_matrix, self.mm_[i].resp_[supervised_ind, :], axis=1)
                     n_comp_mixt = np.append(n_comp_mixt, self.mm_[i].n_components)
@@ -270,8 +313,6 @@ class RadialBasisFunctionNetwork(BaseEstimator, ClassifierMixin):
 
             elif self.feature_type == 'likelihood':
                 for i in range(self.n_classes_):
-                    self.mm_[i] = self.mm_[i].fit(X_real=self.X_real_, X_categorical_1hot=self.X_categorical_1hot_,
-                                                  n_categories=self.n_categories_, prior_weights=priors[i])
 
                     if self.mm_[i].n_components != 0:
                         design_matrix = np.append(design_matrix, self.predict_likelihoods(self.X_real_[supervised_ind, :],
@@ -282,8 +323,6 @@ class RadialBasisFunctionNetwork(BaseEstimator, ClassifierMixin):
 
             elif self.feature_type == 'log_likelihood':
                 for i in range(self.n_classes_):
-                    self.mm_[i] = self.mm_[i].fit(X_real=self.X_real_, X_categorical_1hot=self.X_categorical_1hot_,
-                                                  n_categories=self.n_categories_, prior_weights=priors[i])
 
                     if self.mm_[i].n_components != 0:
                         design_matrix = np.append(design_matrix, self.predict_likelihoods(self.X_real_[supervised_ind, :], self.X_categorical_1hot_[supervised_ind, :], self.mm_[i], type='log'), axis=1)
@@ -293,8 +332,6 @@ class RadialBasisFunctionNetwork(BaseEstimator, ClassifierMixin):
 
             elif self.feature_type == 'proj_log_likelihood':
                 for i in range(self.n_classes_):
-                    self.mm_[i] = self.mm_[i].fit(X_real=self.X_real_, X_categorical_1hot=self.X_categorical_1hot_,
-                                                  n_categories=self.n_categories_, prior_weights=priors[i])
 
                     if self.mm_[i].n_components != 0:
                         likelihoods = self.predict_likelihoods(self.X_real_[supervised_ind, :], self.X_categorical_1hot_[supervised_ind, :], self.mm_[i], type='log')
@@ -303,19 +340,19 @@ class RadialBasisFunctionNetwork(BaseEstimator, ClassifierMixin):
                     n_comp_mixt = np.append(n_comp_mixt, self.mm_[i].n_components)
                     weights2kill = np.append(weights2kill, self.mm_[i].old_weights)
 
+            self.logReg_ = self.logReg_.fit(design_matrix, self.y_, n_comp_mixt, weights2kill)
+
             # Check stop criterion
             ind = np.argwhere(weights2kill == 0)
             aux = np.hstack((old_design_matrix[:, ind].reshape(old_design_matrix.shape[0], -1), np.delete(old_design_matrix, ind, axis=1) - design_matrix))
             norms = np.linalg.norm(aux, axis=0)
             max_tol = np.max(norms)
             #print("Max diff between datasets:", max_tol)
+
             if max_tol < self.tol:
                 break
 
             old_design_matrix = design_matrix.copy()
-
-
-            self.logReg_ = self.logReg_.fit(design_matrix, self.y_, n_comp_mixt, weights2kill)
 
             # Check if all elements of the design matrix (mixture components) were discarded
             if design_matrix.size == 0:
@@ -328,6 +365,8 @@ class RadialBasisFunctionNetwork(BaseEstimator, ClassifierMixin):
 
         # Return the classifier
         return self
+
+
 
     def predict_likelihoods(self, X_real, X_categorical_1hot, mm, type='norm'):
         """ Predict likelihood of each sample given the mixtures.
@@ -589,14 +628,14 @@ if __name__ == '__main__':
     import scipy.io as io
     from sklearn import preprocessing
     from mnist import MNIST
+    import random
 
     def evaluate(X_train, X_test, y_train, y_test):
         # Create and fit the Logistic Regression
 
-        rbfn = RadialBasisFunctionNetwork(link=100, max_iter=1000, tol=1e-3, n_components=2, feature_type='post_prob', covariance_type='full',
-                 equal_covariances=False, component_kill=True, ind_cat_features=(), laplace_smoothing=0.001,
-                 reg_covar=1e-6, max_iter_gmm=1, init_params='kmeans', random_state=None, l1=0.01, l2=0.01,
-                 max_iter_logreg=1)
+        np.random.seed(1)
+        Parameters = {'l1': 0.01, 'l2': 0.01, 'link': 1000, 'n_components': 10, 'component_kill': True, 'covariance_type': 'full'}
+        rbfn = RadialBasisFunctionNetwork(**Parameters)
 
         bef = time.time()
         rbfn.fit(X_train, y_train)
@@ -616,8 +655,12 @@ if __name__ == '__main__':
         X = digits.data
         y = digits.target
 
+
         # Divide in train and test
         X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.5)
+        #random.seed(1)
+        #ind = random.sample(range(0, y_train.shape[0]), int((1 - 1) * y_train.shape[0]))
+        #y_train[ind] = -1
 
         evaluate(X_train, X_test, y_train, y_test)
 
@@ -628,7 +671,9 @@ if __name__ == '__main__':
         X = df.drop([0,1], axis=1).values
         # Divide in train and test
         X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.5)
-        #y_train[0:280] = -1
+        random.seed(1)
+        ind = random.sample(range(0, y_train.shape[0]), int((1 - 1) * y_train.shape[0]))
+        y_train[ind] = -1
         evaluate(X_train, X_test, y_train, y_test)
 
     def glass():
@@ -638,7 +683,9 @@ if __name__ == '__main__':
         X = df.drop(['Type'], axis=1).values
         # Divide in train and test
         X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.49)
-
+        random.seed(1)
+        ind = random.sample(range(0, y_train.shape[0]), int((1 - 0.05) * y_train.shape[0]))
+        y_train[ind] = -1
         evaluate(X_train, X_test, y_train, y_test)
 
     def sonar():
@@ -649,7 +696,9 @@ if __name__ == '__main__':
         X = X[:, :-1]
         # Divide in train and test
         X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.495)
-
+        #random.seed(1)
+        ind = random.sample(range(0, y_train.shape[0]), int((1 - 1) * y_train.shape[0]))
+        y_train[ind] = -1
         evaluate(X_train, X_test, y_train, y_test)
 
     def wine():
@@ -803,6 +852,11 @@ if __name__ == '__main__':
             X_train[i, :] = np.array(images[i])
         y_test = np.array(labels)
 
+        pca = PCA(n_components=260)
+        pca = pca.fit(X_train)
+        X_train = pca.transform(X_train)
+        X_test = pca.transform(X_test)
+
         evaluate(X_train, X_test, y_train, y_test)
 
     def check_estimator():
@@ -817,12 +871,12 @@ if __name__ == '__main__':
     #sonar()
     #wine()
     #colon()
-    leukemia()
+    #leukemia()
     #orl()
     #yaleB()
     #TDT2()
     #usps()
-    #mnist()
+    mnist()
     #check_estimator()
 
 

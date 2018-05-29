@@ -454,7 +454,8 @@ class GaussMultMixture(object):
 
         if self.n_categorical_features > 0:
             for i in ind:
-                del self.mult_weights_[i]
+                i = i[0]
+                self.mult_weights_ = self.mult_weights_[:i] + self.mult_weights_[i + 1:]
 
         self.resp_ = np.delete(self.resp_, ind, axis=1)
 
