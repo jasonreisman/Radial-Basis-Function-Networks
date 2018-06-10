@@ -83,6 +83,9 @@ class RadialBasisFunctionNetwork(BaseEstimator, ClassifierMixin):
     This algorithm support semi-suppervised learning, meaning that certain samples can be used
     in the fitting of the densities but not in the fitting of the log reg.
     For that every unlabeled sample should be identified with a -1 in the y vector.
+
+    Note: This dataset allows nans but the only with feature_type = post_prob!
+
     Parameters
     ----------
     link : integer, default 0
@@ -132,7 +135,7 @@ class RadialBasisFunctionNetwork(BaseEstimator, ClassifierMixin):
         defaults to True.
         If True when a prior of the gmm weights is 0 the corresponding
         component weight will be set entirely to 0.
-    laplace_smoothing : float, defalt = 0.01
+    laplace_smoothing : float, defalt = 0.001
         Constant responsible for the laplace smoothing in the MAP estimation of the categorical weights.
     reg_covar : float, defaults to 1e-6.
         Non-negative regularization added to the diagonal of covariance.
@@ -203,7 +206,7 @@ class RadialBasisFunctionNetwork(BaseEstimator, ClassifierMixin):
         """
 
         # Check that X and y have correct shape
-        X, y = check_X_y(X, y, dtype=None)#, dtype=float64)
+        X, y = check_X_y(X, y, dtype=None, force_all_finite=False)#, dtype=float64)
         y = column_or_1d(y, warn=True)
         #check_classification_targets(y)
 
@@ -246,6 +249,7 @@ class RadialBasisFunctionNetwork(BaseEstimator, ClassifierMixin):
         self.real_features_ = np.delete(np.arange(self.n_features_), np.array(self.ind_cat_features))
 
         self.X_real_ = X[:, self.real_features_]
+        self.X_real_ = self.X_real_.astype(np.float)
         self.X_categorical_1hot_ = np.array([]).reshape((n_samples, 0))
         self.onehot_encoders_ = []
         self.n_categories_ = np.array([])
@@ -263,8 +267,8 @@ class RadialBasisFunctionNetwork(BaseEstimator, ClassifierMixin):
         self.n_real_features_ = self.real_features_.size
         self.n_cat_features_ = len(self.ind_cat_features)
 
-        self.X_real_ = check_array(self.X_real_, ensure_min_features=0)
-        self.X_categorical_1hot_ = check_array(self.X_categorical_1hot_, ensure_min_features=0)
+        self.X_real_ = check_array(self.X_real_, ensure_min_features=0, force_all_finite=False)
+        self.X_categorical_1hot_ = check_array(self.X_categorical_1hot_, ensure_min_features=0, force_all_finite=False)
 
         old_design_matrix = np.ones((sum(supervised_ind), self.n_components * self.n_classes_)) * np.inf
 
@@ -349,7 +353,9 @@ class RadialBasisFunctionNetwork(BaseEstimator, ClassifierMixin):
             max_tol = np.max(norms)
             #print("Max diff between datasets:", max_tol)
 
+
             if max_tol < self.tol:
+                self.para_apagar = design_matrix
                 break
 
             old_design_matrix = design_matrix.copy()
@@ -362,6 +368,8 @@ class RadialBasisFunctionNetwork(BaseEstimator, ClassifierMixin):
                 priors = self.calculate_priors(self.logReg_.weights_, n_comp_mixt)
 
             self.n_iter_ += 1
+
+
 
         # Return the classifier
         return self
@@ -466,14 +474,36 @@ class RadialBasisFunctionNetwork(BaseEstimator, ClassifierMixin):
             oneHotTrans = self.onehot_encoders_[ind].transform(X[:, n])
             X_categorical_1hot = np.append(X_categorical_1hot, oneHotTrans, axis=1)
 
-        X_real = check_array(X_real, ensure_min_features=0)
-        X_categorical_1hot = check_array(X_categorical_1hot, ensure_min_features=0)
+        X_real = check_array(X_real, ensure_min_features=0, force_all_finite=False)
+        X_categorical_1hot = check_array(X_categorical_1hot, ensure_min_features=0, force_all_finite=False)
+
+        # Check missing data
+        missing_real_entries = []
+        missing_real = False
+        for i in range(X_real.shape[0]):
+            pos = np.where(np.isnan(X_real[i, :]))[0]
+            missing_real_entries.append(pos)
+            if len(pos) != 0:
+                missing_real = True
+
+        missing_cat_entries = []
+        missing_cat = False
+        for i in range(X_categorical_1hot.shape[0]):
+            pos = np.where(np.isnan(X_categorical_1hot[i, :]))[0]
+            missing_cat_entries.append(pos)
+            if len(pos) != 0:
+                missing_cat = True
 
         design_matrix = np.array([]).reshape(n_samples, 0)
         if self.feature_type == 'post_prob':
             for i in range(self.n_classes_):
                 if self.mm_[i].n_components == 0:
                     continue
+
+                self.mm_[i].missing_real_entries = missing_real_entries
+                self.mm_[i].missing_real = missing_real
+                self.mm_[i].missing_cat_entries = missing_cat_entries
+                self.mm_[i].missing_cat = missing_cat
 
                 design_matrix = np.append(design_matrix, self.mm_[i].predict_proba(X_real, X_categorical_1hot), axis=1)
 
@@ -535,14 +565,36 @@ class RadialBasisFunctionNetwork(BaseEstimator, ClassifierMixin):
             oneHotTrans = self.onehot_encoders_[ind].transform(X[:, n])
             X_categorical_1hot = np.append(X_categorical_1hot, oneHotTrans, axis=1)
 
-        X_real = check_array(X_real, ensure_min_features=0)
-        X_categorical_1hot = check_array(X_categorical_1hot, ensure_min_features=0)
+        X_real = check_array(X_real, ensure_min_features=0, force_all_finite=False)
+        X_categorical_1hot = check_array(X_categorical_1hot, ensure_min_features=0, force_all_finite=False)
+
+        # Check missing data
+        missing_real_entries = []
+        missing_real = False
+        for i in range(X_real.shape[0]):
+            pos = np.where(np.isnan(X_real[i, :]))[0]
+            missing_real_entries.append(pos)
+            if len(pos) != 0:
+                missing_real = True
+
+        missing_cat_entries = []
+        missing_cat = False
+        for i in range(X_categorical_1hot.shape[0]):
+            pos = np.where(np.isnan(X_categorical_1hot[i, :]))[0]
+            missing_cat_entries.append(pos)
+            if len(pos) != 0:
+                missing_cat = True
 
         design_matrix = np.array([]).reshape(n_samples, 0)
         if self.feature_type == 'post_prob':
             for i in range(self.n_classes_):
                 if self.mm_[i].n_components == 0:
                     continue
+
+                self.mm_[i].missing_real_entries = missing_real_entries
+                self.mm_[i].missing_real = missing_real
+                self.mm_[i].missing_cat_entries = missing_cat_entries
+                self.mm_[i].missing_cat = missing_cat
 
                 design_matrix = np.append(design_matrix, self.mm_[i].predict_proba(X_real, X_categorical_1hot), axis=1)
 
@@ -864,6 +916,22 @@ if __name__ == '__main__':
         check_estimator(RadialBasisFunctionNetwork)
         pass
 
+    def test_nans():
+
+        X = np.array([[1, 2.0, 3, 'one', 'green'], [np.nan, np.nan, 5, np.nan, 'green'], [4, 8, 231, 'one', 'green'], [234, 56, 3, 'one', 'green'], [np.nan, 8, 532, 'two', 'red']])
+        y = np.array([1,0,0,0,1])
+
+        ind_cat_features = (3, 4)
+        cat_features = np.array([['one', 'two'], ['green', 'red']])
+        Parameters = {'l1': 0.01, 'l2': 0.01, 'link': 1000, 'n_components': 2, 'component_kill': True, 'covariance_type': 'full'}
+        rbfn = RadialBasisFunctionNetwork(**Parameters, ind_cat_features=ind_cat_features, cat_features=cat_features)
+        rbfn.fit(X, y)
+
+        pass
+
+
+    test_nans()
+
 
     #iris()
     #wbdc()
@@ -876,7 +944,7 @@ if __name__ == '__main__':
     #yaleB()
     #TDT2()
     #usps()
-    mnist()
+    #mnist()
     #check_estimator()
 
 

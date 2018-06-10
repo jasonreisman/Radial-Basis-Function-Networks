@@ -52,11 +52,15 @@ class OneHotEncoder(object):
         # x_tranformed converts the labels from 0 to n_unique_labels
         x_transformed = np.zeros(x.size, dtype=int)
         for i in range(x.size):
-            x_transformed[i] = self.mapping_[x[i]]
+            if x[i] == 'nan':
+                x_transformed[i] = 0
+            else:
+                x_transformed[i] = self.mapping_[x[i]]
 
         # Create X
-        X = np.zeros((x.size, self.unique_labels_.size), dtype=int)
+        X = np.zeros((x.size, self.unique_labels_.size))
         X[np.arange(x.size), x_transformed] = 1
+        X[np.argwhere(x=='nan').flatten(), :] = np.nan
 
         return X
 

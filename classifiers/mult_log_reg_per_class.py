@@ -156,7 +156,7 @@ class LogisticRegressionperClass(BaseEstimator, ClassifierMixin):
         cost = - np.sum(np.log(softmax + np.finfo(np.float64).eps) * y_1hot)
 
         cost += l1 * np.sum(w_extended) # l1 regularization
-        cost += l2 * np.dot(w, w)  # l2 regularization
+        cost += l2 * np.dot(w, w) # l2 regularization
 
         dif = y_1hot - softmax
 

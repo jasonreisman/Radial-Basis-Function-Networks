@@ -113,11 +113,28 @@ class GaussMultMixture(object):
             raise ValueError("covariance_type must be a string contained in ['full', 'diag']. Valor passed: "
                              "%s" % self.covariance_type)
 
-        self.X_real = check_array(X_real, ensure_min_features=0)
-        self.X_categorical_1hot = check_array(X_categorical_1hot, ensure_min_features=0)
+        self.X_real = check_array(X_real, ensure_min_features=0, force_all_finite=False)
+        self.X_categorical_1hot = check_array(X_categorical_1hot, ensure_min_features=0, force_all_finite=False)
 
         # If warm_start is false or the method has not been fit before, initialize the parameters.
         if (self.warm_start is False) or (hasattr(self, 'weights_') is False):
+
+            # Check missing data
+            self.missing_real_entries = []
+            self.missing_real = False
+            for i in range(self.X_real.shape[0]):
+                pos = np.where(np.isnan(self.X_real[i, :]))[0]
+                self.missing_real_entries.append(pos)
+                if len(pos) != 0:
+                    self.missing_real = True
+
+            self.missing_cat_entries = []
+            self.missing_cat = False
+            for i in range(self.X_categorical_1hot.shape[0]):
+                pos = np.where(np.isnan(self.X_categorical_1hot[i, :]))[0]
+                self.missing_cat_entries.append(pos)
+                if len(pos) != 0:
+                    self.missing_cat = True
 
             self.weights_ = np.ones(self.n_components) / self.n_components
 
@@ -132,12 +149,14 @@ class GaussMultMixture(object):
 
                 n_samples, n_features = self.X_real.shape
 
+                X_4centers = self.X_real.copy()[~np.isnan(self.X_real).any(axis=1)] # gaussian centers can only be calculated with samples that have no missing components
+
                 if self.init_params == 'kmeans':
-                    kmeans = KMeans(n_clusters=self.n_components, random_state=self.random_state).fit(self.X_real)
+                    kmeans = KMeans(n_clusters=self.n_components, random_state=self.random_state).fit(X_4centers)
                     self.means_ = kmeans.cluster_centers_
 
                 elif self.init_params == 'random':
-                    self.means_ = self.X_real[np.random.randint(n_samples, size=self.n_components), :]
+                    self.means_ = X_4centers[np.random.randint(n_samples, size=self.n_components), :]
 
                 if self.covariance_type == "full":
                     self.covariances_ = np.zeros((self.n_components, n_features, n_features))
@@ -168,7 +187,6 @@ class GaussMultMixture(object):
             if self.n_components == 0:
                 self.old_weights = self.weights_.copy()
                 break
-
 
             self.resp_ = self._e_step(self.X_real, self.X_categorical_1hot)
 
@@ -297,12 +315,18 @@ class GaussMultMixture(object):
         log_prob = np.zeros((X_real.shape[0], self.n_components))
 
         if self.n_real_features > 0:
+            if self.missing_real is True:
+                X_real = self.estimate_missing_real(X_real)
+
             if self.covariance_type == "full":
                 log_prob += log_multivariate_normal_density_full(X_real, means=self.means_, covars=self.covariances_, reg=self.reg_covar)
             else:
                 log_prob += log_multivariate_normal_density_diag(X_real, means=self.means_, covars=self.covariances_, reg=self.reg_covar)
 
         if self.n_categorical_features > 0:
+            if self.missing_cat is True:
+                X_categorical_1hot = self.estimate_missing_cat(X_categorical_1hot)
+
             for i in range(self.n_components):
                 log_prob[:, i] += np.sum(X_categorical_1hot * np.log(self.mult_weights_[i] + np.finfo(np.float64).eps), axis=1)
 
@@ -473,6 +497,41 @@ class GaussMultMixture(object):
 
             return covariances
 
+    def estimate_missing_real(self, X_real):
+
+        for i in range(len(self.missing_real_entries)):
+            if self.missing_real_entries[i].size == 0:
+                continue
+
+            estimated_mean_missing = 0
+            for j in range(self.n_components):
+
+                mean_m = self.means_[j][self.missing_real_entries[i]]
+                cov_mo = np.delete(self.covariances_[j][self.missing_real_entries[i], :], self.missing_real_entries[i], axis=1)
+                cov_oo = np.delete(np.delete(self.covariances_[j], self.missing_real_entries[i], axis=0), self.missing_real_entries[i], axis=1)
+                x_o = np.delete(X_real[i, :], self.missing_real_entries[i])
+                mean_o = np.delete(self.means_[j], self.missing_real_entries[i])
+
+                estimated_mean_missing_j = mean_m + cov_mo.dot(np.linalg.inv(cov_oo)).dot((x_o - mean_o).T)
+                estimated_mean_missing += self.weights_[j] * estimated_mean_missing_j
+
+            X_real[i, self.missing_real_entries[i]] = estimated_mean_missing
+
+        return X_real
+
+    def estimate_missing_cat(self, X_categorical_1hot):
+
+        estimated_missing = 0
+        for j in range(self.n_components):
+            estimated_missing += self.weights_[j] * self.mult_weights_[j]
+
+        for i in range(len(self.missing_cat_entries)):
+            if self.missing_cat_entries[i].size == 0:
+                continue
+
+            X_categorical_1hot[i, self.missing_cat_entries[i]] = estimated_missing[self.missing_cat_entries[i]]
+
+        return X_categorical_1hot
 
 if __name__ == '__main__':
 

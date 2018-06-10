@@ -308,12 +308,7 @@ def census():
     np.random.seed(1)
     print('census')
     data = pd.read_csv('/home/joao/Documents/Thesis/Radial_Basis_Funtion_Networks/datasets/census_income', header=None)
-    data = data.replace(' ?', np.nan)
-    for i in range(data.shape[1]):
-        if type(data.iat[0, i]) == str:
-            data[i] = data[i].fillna(data[i].mode()[0])
-        else:
-            data[i] = data[i].fillna(data[i].median())
+    data = data.replace(' ?', 'nan')
     X = data.values[:, :-1]
     y = np.zeros(data[14].shape)
     y[data[14] == ' >50K'] = 1
@@ -322,12 +317,18 @@ def census():
     X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.3)
 
     param_dist = {"link": [0, 1, 10, 50, 100, 1000, 1e5, 1e10],
-                  "n_components": sp_randint(1, 50),
+                  "n_components": sp_randint(35, 80),
                   "l1": [0.001, 0.01, 0.1, 1, 10, 100],
                   "l2": [0.001, 0.01, 0.1, 1, 10, 100]}
 
     ind_cat_features = (1, 3, 5, 6, 7, 8, 9, 13)
-    cat_features = [np.unique(X[:, 1]), np.unique(X[:, 3]), np.unique(X[:, 5]), np.unique(X[:, 6]), np.unique(X[:, 7]), np.unique(X[:, 8]), np.unique(X[:, 9]), np.unique(X[:, 13])]
+    cat_features = []
+    for counter, i in enumerate(ind_cat_features):
+        cat_features.append(np.unique(X[:, i]))
+        if 'nan' in cat_features[counter]:
+            index = np.argwhere(cat_features[counter] == 'nan')
+            cat_features[counter] = np.delete(cat_features[counter], index)
+
     rbfn = RadialBasisFunctionNetwork(ind_cat_features=ind_cat_features, cat_features=cat_features)
 
     # run randomized search
@@ -378,33 +379,38 @@ def mushrooms():
     np.random.seed(1)
     print('mush')
     data = pd.read_csv('/home/joao/Documents/Thesis/Radial_Basis_Funtion_Networks/datasets/mushrooms', header=None)
-    data = data.replace(to_replace='?', value=np.nan )
+    #data = data.replace(to_replace='?', value=np.nan)
 
-    for i in range(data.shape[1]):
-        data[i] = data[i].fillna(data[i].mode()[0])
+    # for i in range(data.shape[1]):
+    #     data[i] = data[i].fillna(data[i].mode()[0])
 
     X = data.values[:, 1:]
     y = data.values[:, 0]
 
-
-            # Divide in train and test
-    X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2)
-    param_dist = {"link": [0, 1, 10, 50, 100, 1000, 1e5, 1e10],
-                  "n_components": sp_randint(1, 10),
-                  "l1": [0.001, 0.01, 0.1, 1, 10, 100],
-                  "l2": [0.001, 0.01, 0.1, 1, 10, 100]}
-
-    ind_cat_features = np.arange(X_train.shape[1])
+    ind_cat_features = np.arange(X.shape[1])
     cat_features = []
     for i in ind_cat_features:
         cat_features.append(np.unique(X[:, i]))
+        if '?' in cat_features[i]:
+            index = np.argwhere(cat_features[i] == '?')
+            cat_features[i] = np.delete(cat_features[i], index)
+
+    np.place(X, X == '?', 'nan')
+
+    param_dist = {"link": [0, 1, 10, 50, 100, 1000, 1e5, 1e10],
+                  "n_components": sp_randint(1, 30),
+                  "l1": [0.001, 0.01, 0.1, 1, 10, 100],
+                  "l2": [0.001, 0.01, 0.1, 1, 10, 100]}
+
 
     rbfn = RadialBasisFunctionNetwork(ind_cat_features=ind_cat_features, cat_features=cat_features)
 
     # run randomized search
-    n_iter_search = 100
+    n_iter_search = 20
     random_search = RandomizedSearchCV(rbfn, param_distributions=param_dist, n_iter=n_iter_search, n_jobs=-1,
                                        refit=False)
+    # Divide in train and test
+    X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2)
 
     start = time()
     random_search.fit(X_train, y_train)
@@ -414,8 +420,54 @@ def mushrooms():
 
     return random_search, X_train, X_test, y_train, y_test
 
+def tsne():
+    import numpy as np
+    from sklearn.manifold import TSNE
+    from sklearn import datasets
+    import matplotlib.pyplot as plt
+
+    digits = datasets.load_wine()
+    X = digits.data
+    y = digits.target
+    red = y == 0
+    green = y == 1
+    blue = y == 2
+
+    perplexities = [70]#[10, 30, 50, 70, 90]
+
+    # for i in perplexities:
+    #     X_embedded = TSNE(n_components=2, perplexity=i).fit_transform(X)
+    #
+    #     plt.scatter(X_embedded[red, 0], X_embedded[red, 1], c="r")
+    #     plt.scatter(X_embedded[green, 0], X_embedded[green, 1], c="g")
+    #     plt.scatter(X_embedded[blue, 0], X_embedded[blue, 1], c="b")
+    #     plt.xticks([])
+    #     plt.yticks([])
+    #
+    #     plt.show()
+
+    #Parameters = {'l1': 0.001, 'l2': 0.001, 'link': 100, 'n_components': 3, 'component_kill': True, 'covariance_type': 'full'}
+    Parameters = {'l1': 0.1, 'l2': 10, 'link': 10000, 'n_components': 11, 'component_kill': True, 'covariance_type': 'diag'}
+
+    rbfn = RadialBasisFunctionNetwork(**Parameters)
+
+    rbfn.fit(X, y)
+
+    for i in perplexities:
+        X_embedded = TSNE(n_components=2, perplexity=i).fit_transform(rbfn.para_apagar)
+
+        plt.scatter(X_embedded[red, 0], X_embedded[red, 1], c="r")
+        plt.scatter(X_embedded[green, 0], X_embedded[green, 1], c="g")
+        plt.scatter(X_embedded[blue, 0], X_embedded[blue, 1], c="b")
+        plt.xticks([])
+        plt.yticks([])
+
+        plt.show()
+    pass
 
 if __name__ == '__main__':
+
+    #tsne()
     # np.random.seed(1)
     # random.seed(1)
     #
@@ -426,17 +478,20 @@ if __name__ == '__main__':
     #     results(best_estimator, X_train, X_test, y_train, y_test)
 
     labeled = [1, 0.85, 0.5, 0.25, 0.05]
-    #print('iris')
+    print('census')
     data = pd.read_csv('/home/joao/Documents/Thesis/Radial_Basis_Funtion_Networks/datasets/census_income', header=None)
-    data = data.replace(' ?', np.nan)
-    for i in range(data.shape[1]):
-        if type(data.iat[0, i]) == str:
-            data[i] = data[i].fillna(data[i].mode()[0])
-        else:
-            data[i] = data[i].fillna(data[i].median())
+    data = data.replace(' ?', 'nan')
     X = data.values[:, :-1]
     y = np.zeros(data[14].shape)
     y[data[14] == ' >50K'] = 1
+
+    ind_cat_features = (1, 3, 5, 6, 7, 8, 9, 13)
+    cat_features = []
+    for counter, i in enumerate(ind_cat_features):
+        cat_features.append(np.unique(X[:, i]))
+        if 'nan' in cat_features[counter]:
+            index = np.argwhere(cat_features[counter] == 'nan')
+            cat_features[counter] = np.delete(cat_features[counter], index)
 
 
     for perc in labeled:
@@ -453,10 +508,7 @@ if __name__ == '__main__':
             y_train_aux[ind] = -1
 
             # specify parameters and distributions to sample from
-            ind_cat_features = (1, 3, 5, 6, 7, 8, 9, 13)
-            cat_features = [np.unique(X[:, 1]), np.unique(X[:, 3]), np.unique(X[:, 5]), np.unique(X[:, 6]),
-                            np.unique(X[:, 7]), np.unique(X[:, 8]), np.unique(X[:, 9]), np.unique(X[:, 13])]
-            param_dist = {"link": 50, "n_components": 45, "l1": 0.01, "l2": 1, "covariance_type": 'full'}
+            param_dist = {"link": 1000, "n_components": 79, "l1": 0.01, "l2": 0.01, "covariance_type": 'full'}
             rbfn = RadialBasisFunctionNetwork(**param_dist, ind_cat_features=ind_cat_features, cat_features=cat_features)
 
             rbfn.fit(X_train, y_train_aux)
