@@ -84,12 +84,3 @@ class OneHotEncoder(object):
         y = np.array(y)
 
         return y
-
-if __name__ == '__main__':
-
-    x = np.array(['1', '2', '3', '3'])
-    oneHot = OneHotEncoder().fit(x)
-    x_1hot = oneHot.transform(x)
-
-    x_ = oneHot.retransform(x_1hot)
-    pass

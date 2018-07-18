@@ -108,6 +108,8 @@ class RadialBasisFunctionNetwork(BaseEstimator, ClassifierMixin):
         If RandomState instance, random_state is the random number generator;
         If None, the random number generator is the RandomState instance used
         by `np.random`.
+    allow_nan : boolean, default False
+        If True the dataset can have NaNs which will be infered by the mixtures
 
     (for the Gaussian Mixture Models)
     n_components : int, defaults to 2.
@@ -171,7 +173,7 @@ class RadialBasisFunctionNetwork(BaseEstimator, ClassifierMixin):
     def __init__(self, link=0, max_iter=1000, tol=1e-3, n_components=5, feature_type='post_prob', covariance_type='full',
                  equal_covariances=False, component_kill=True, ind_cat_features=(), cat_features=None, laplace_smoothing=0.001,
                  reg_covar=1e-6, max_iter_gmm=1, init_params='kmeans', random_state=None, l1=0.01, l2=0.01,
-                 max_iter_logreg=5):
+                 max_iter_logreg=5, allow_nan=False):
         self.link = link
         self.max_iter = max_iter
         self.tol = tol
@@ -190,6 +192,7 @@ class RadialBasisFunctionNetwork(BaseEstimator, ClassifierMixin):
         self.l1 = l1
         self.l2 = l2
         self.max_iter_logreg = max_iter_logreg
+        self.allow_nan = allow_nan
 
     def fit(self, X, y):
         """Fit a Radial Basis Function Network classifier to the training data.
@@ -206,7 +209,10 @@ class RadialBasisFunctionNetwork(BaseEstimator, ClassifierMixin):
         """
 
         # Check that X and y have correct shape
-        X, y = check_X_y(X, y, dtype=None, force_all_finite=False)#, dtype=float64)
+        if self.allow_nan is True:
+            X, y = check_X_y(X, y, dtype=None, force_all_finite=False) #, dtype=float64)
+        else:
+            X, y = check_X_y(X, y, dtype=None, force_all_finite=True)
         y = column_or_1d(y, warn=True)
         #check_classification_targets(y)
 
@@ -355,7 +361,6 @@ class RadialBasisFunctionNetwork(BaseEstimator, ClassifierMixin):
 
 
             if max_tol < self.tol:
-                self.para_apagar = design_matrix
                 break
 
             old_design_matrix = design_matrix.copy()
@@ -677,9 +682,6 @@ if __name__ == '__main__':
     from sklearn import datasets
     from sklearn.metrics import accuracy_score
     from sklearn.model_selection import train_test_split
-    import scipy.io as io
-    from sklearn import preprocessing
-    from mnist import MNIST
     import random
 
     def evaluate(X_train, X_test, y_train, y_test):
@@ -710,47 +712,9 @@ if __name__ == '__main__':
 
         # Divide in train and test
         X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.5)
-        #random.seed(1)
         #ind = random.sample(range(0, y_train.shape[0]), int((1 - 1) * y_train.shape[0]))
         #y_train[ind] = -1
 
-        evaluate(X_train, X_test, y_train, y_test)
-
-    def wbdc():
-        np.random.seed(1)
-        df = pd.read_csv('https://raw.githubusercontent.com/rasbt/python-machine-learning-book/master/code/datasets/wdbc/wdbc.data', header=None)
-        y = df[[1]].values.ravel()
-        X = df.drop([0,1], axis=1).values
-        # Divide in train and test
-        X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.5)
-        random.seed(1)
-        ind = random.sample(range(0, y_train.shape[0]), int((1 - 1) * y_train.shape[0]))
-        y_train[ind] = -1
-        evaluate(X_train, X_test, y_train, y_test)
-
-    def glass():
-        np.random.seed(1)
-        df = pd.read_csv('../datasets/glass.csv')
-        y = df[['Type']].values.ravel()
-        X = df.drop(['Type'], axis=1).values
-        # Divide in train and test
-        X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.49)
-        random.seed(1)
-        ind = random.sample(range(0, y_train.shape[0]), int((1 - 0.05) * y_train.shape[0]))
-        y_train[ind] = -1
-        evaluate(X_train, X_test, y_train, y_test)
-
-    def sonar():
-        np.random.seed(1)
-        df = pd.read_csv('../datasets/sonar.csv')
-        X = np.vstack((df.columns.values, df.values))
-        y = X[:, -1]
-        X = X[:, :-1]
-        # Divide in train and test
-        X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.495)
-        #random.seed(1)
-        ind = random.sample(range(0, y_train.shape[0]), int((1 - 1) * y_train.shape[0]))
-        y_train[ind] = -1
         evaluate(X_train, X_test, y_train, y_test)
 
     def wine():
@@ -763,191 +727,13 @@ if __name__ == '__main__':
 
         evaluate(X_train, X_test, y_train, y_test)
 
-    def colon():
-        np.random.seed(1)
-        filename = '/home/joao/Documents/Thesis/Radial_Basis_Funtion_Networks/datasets/colon.csv'
-        df = pd.read_csv(filename, sep=' ', header=None)
-        X = df.values.T
-        filename = '/home/joao/Documents/Thesis/Radial_Basis_Funtion_Networks/datasets/colon_target.csv'
-        df = pd.read_csv(filename, sep=' ', header=None)
-        df.values[df.values < 0] = 0
-        df.values[df.values > 0] = 1
-        y = df.values.ravel()
-        # Divide in train and test
-        X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.5)
-
-        evaluate(X_train, X_test, y_train, y_test)
-
-    def leukemia():
-        np.random.seed(1)
-        filename = '/home/joao/Documents/Thesis/Radial_Basis_Funtion_Networks/datasets/leukemia.csv'
-        df = pd.read_csv(filename)
-        X = df.values.T
-        filename = '/home/joao/Documents/Thesis/Radial_Basis_Funtion_Networks/datasets/colon_target.csv'
-        y = np.zeros(df.columns.size)
-        for ind, i in enumerate(df.columns):
-            if 'AML' in i:
-                y[ind] = 1
-
-        # Divide in train and test
-        X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.46)
-
-        evaluate(X_train, X_test, y_train, y_test)
-
-    def orl():
-        file = "/home/joao/Documents/Thesis/Radial_Basis_Funtion_Networks/datasets/ORL"
-        data = io.loadmat(file)
-        X_ = np.array(data['fea'], dtype=np.float64)
-        X = np.array([]).reshape(0, int(X_.size / 400))
-        for x in np.split(X_, 400):
-            X = np.append(X, x, axis=0)
-        y = np.asarray(data['gnd'], dtype=np.float64).ravel()
-
-        # Divide in train and test
-        X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.5)
-
-        min_max_scaler = preprocessing.MinMaxScaler()
-        X_train = min_max_scaler.fit_transform(X_train)
-        X_test = min_max_scaler.transform(X_test)
-
-        evaluate(X_train, X_test, y_train, y_test)
-
-    def balance_scale():
-        filename = '/home/joao/Documents/Thesis/Radial_Basis_Funtion_Networks/datasets/balance_scale'
-        df = pd.read_csv(filename, sep=",", header=None)
-        y = df[0].values
-        X = df[[1, 2, 3, 4]].values
-        X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2)
-        evaluate(X_train, X_test, y_train, y_test)
-
-    def histpopindex(): # with categories
-        filename = '/home/joao/Documents/Thesis/Radial_Basis_Funtion_Networks/datasets/HistoricalPopularityIndex.csv'
-        df = pd.read_csv(filename)
-        df = df.dropna(axis=0)
-        y = df['continent'].values
-        df = df.drop(df.columns[[0, 1, 4, 5, 7]], axis=1)
-        X = df.values
-        cat_features = None#[np.unique(X[:, 0]), np.unique(X[:, 2]), np.unique(X[:, 5]), np.unique(X[:, 6]), np.unique(X[:, 7])]
-        X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.5, random_state=6)
-
-        rbfn = RadialBasisFunctionNetwork(link=100, max_iter=10, n_components=3, feature_type='post_prob', covariance_type='full',
-                 equal_covariances=False, component_kill=False, ind_cat_features=(0,2,5,6,7), cat_features=cat_features, laplace_smoothing=0.001,
-                 reg_covar=1e-6, max_iter_gmm=1, init_params='kmeans', random_state=None, l1=0.01, l2=0.01,
-                 max_iter_logreg=1)
-
-        bef = time.time()
-        rbfn.fit(X_train, y_train)
-        now = time.time()
-        print(now - bef)
-
-        # Make predictions
-        #        y_pred_prob = rbfn.predict_proba(X_test)
-        y_pred = rbfn.predict(X_test)
-        accuracy = accuracy_score(y_test, y_pred)
-        print(accuracy)
-        pass
-
-    def yaleB():
-        file = "/home/joao/Documents/Thesis/Radial_Basis_Funtion_Networks/datasets/YaleB"
-        data = io.loadmat(file)
-        X = data['fea']
-        y = data['gnd'].ravel()
-
-        X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.499, random_state=1)
-        evaluate(X_train, X_test, y_train, y_test)
-
-    def TDT2():
-        file = "/home/joao/Documents/Thesis/Radial_Basis_Funtion_Networks/datasets/TDT2"
-        data = io.loadmat(file)
-        X = data['fea']#.toarray()
-        y = data['gnd']
-
-        X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.5)
-        evaluate(X_train, X_test, y_train, y_test)
-
-    def usps():
-        import pandas as pd
-        file = "/home/joao/Documents/Thesis/Radial_Basis_Funtion_Networks/datasets/usps"
-        df = pd.read_csv(file, sep=' ', header=None)  # , index_col=0)
-        X_train = df.values[:, 1:-1]
-        y_train = df[0]
-        file = "/home/joao/Documents/Thesis/Radial_Basis_Funtion_Networks/datasets/usps.t"
-        df = pd.read_csv(file, sep=' ', header=None)  # , index_col=0)
-        X_test = df.values[:, 1:-1]
-        y_test = df[0]
-
-        X_ = np.zeros((X_train.shape[0], X_train.shape[1]))
-        for i in range(X_train.shape[0]):
-            for j in range(X_train.shape[1]):
-                X_[i, j] = X_train[i, j].split(":")[-1]
-        X_train = X_
-
-        X_ = np.zeros((X_test.shape[0], X_test.shape[1]))
-        for i in range(X_test.shape[0]):
-            for j in range(X_test.shape[1]):
-                X_[i, j] = X_test[i, j].split(":")[-1]
-        X_test = X_
-
-        evaluate(X_train, X_test, y_train, y_test)
-
-    def mnist():
-        mndata = MNIST('/home/joao/Documents/Thesis/Radial_Basis_Funtion_Networks/datasets')
-        images, labels = mndata.load_training()
-        X_train = np.zeros((len(images), len(images[0])))
-        for i in range(X_train.shape[0]):
-            X_train[i, :] = np.array(images[i])
-        y_train = np.array(labels)
-
-        images, labels = mndata.load_testing()
-        X_test = np.zeros((len(images), len(images[0])))
-        for i in range(X_test.shape[0]):
-            X_train[i, :] = np.array(images[i])
-        y_test = np.array(labels)
-
-        pca = PCA(n_components=260)
-        pca = pca.fit(X_train)
-        X_train = pca.transform(X_train)
-        X_test = pca.transform(X_test)
-
-        evaluate(X_train, X_test, y_train, y_test)
-
     def check_estimator():
         from sklearn.utils.estimator_checks import check_estimator
         check_estimator(RadialBasisFunctionNetwork)
         pass
 
-    def test_nans():
 
-        X = np.array([[1, 2.0, 3, 'one', 'green'], [np.nan, np.nan, 5, np.nan, 'green'], [4, 8, 231, 'one', 'green'], [234, 56, 3, 'one', 'green'], [np.nan, 8, 532, 'two', 'red']])
-        y = np.array([1,0,0,0,1])
-
-        ind_cat_features = (3, 4)
-        cat_features = np.array([['one', 'two'], ['green', 'red']])
-        Parameters = {'l1': 0.01, 'l2': 0.01, 'link': 1000, 'n_components': 2, 'component_kill': True, 'covariance_type': 'full'}
-        rbfn = RadialBasisFunctionNetwork(**Parameters, ind_cat_features=ind_cat_features, cat_features=cat_features)
-        rbfn.fit(X, y)
-
-        pass
-
-
-    test_nans()
-
-
-    #iris()
-    #wbdc()
-    #glass()
-    #sonar()
+    iris()
     #wine()
-    #colon()
-    #leukemia()
-    #orl()
-    #yaleB()
-    #TDT2()
-    #usps()
-    #mnist()
     #check_estimator()
-
-
-    #balance_scale()
-    #histpopindex()
 

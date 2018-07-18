@@ -277,29 +277,3 @@ class LogisticRegressionperClass(BaseEstimator, ClassifierMixin):
         y = self.oneHot_.retransform(y_)
 
         return y
-
-if __name__ == '__main__':
-    from sklearn import datasets
-    from sklearn.model_selection import train_test_split
-    from sklearn.metrics import accuracy_score
-
-    #np.random.seed(1)
-    iris = datasets.load_iris()
-    X = iris.data
-    y = iris.target
-    X = iris.data[iris.target != 2, :]
-    y = iris.target[iris.target != 2]
-    # Divide in train and test
-    X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.3, random_state=1)
-
-    # Create and fit the Logistic Regression
-    logReg = LogisticRegressionperClass(l1=0.01, l2=0.01, max_iter=5, warm_start=False)
-    logReg.fit(X_train, y_train)
-
-    # Make predictions
-    y_pred_prob = logReg.predict_proba(X_test)
-    y_pred = logReg.predict(X_test)
-    accuracy = accuracy_score(y_test, y_pred)
-    print(accuracy)
-
-    pass

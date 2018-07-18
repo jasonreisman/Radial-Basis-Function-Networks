@@ -512,7 +512,12 @@ class GaussMultMixture(object):
                 x_o = np.delete(X_real[i, :], self.missing_real_entries[i])
                 mean_o = np.delete(self.means_[j], self.missing_real_entries[i])
 
-                estimated_mean_missing_j = mean_m + cov_mo.dot(np.linalg.inv(cov_oo)).dot((x_o - mean_o).T)
+                try:
+                    estimated_mean_missing_j = mean_m + cov_mo.dot(np.linalg.inv(cov_oo)).dot((x_o - mean_o).T)
+                except np.linalg.linalg.LinAlgError:
+                    reg = np.identity(cov_oo.shape[0]) * self.reg_covar
+                    estimated_mean_missing_j = mean_m + cov_mo.dot(np.linalg.inv(cov_oo + reg)).dot((x_o - mean_o).T)
+
                 estimated_mean_missing += self.weights_[j] * estimated_mean_missing_j
 
             X_real[i, self.missing_real_entries[i]] = estimated_mean_missing
@@ -532,28 +537,3 @@ class GaussMultMixture(object):
             X_categorical_1hot[i, self.missing_cat_entries[i]] = estimated_missing[self.missing_cat_entries[i]]
 
         return X_categorical_1hot
-
-if __name__ == '__main__':
-
-    import pandas as pd
-    from sklearn import datasets
-    import matplotlib.pyplot as plt
-    from matplotlib.patches import Ellipse
-    from sklearn.model_selection import train_test_split
-
-    def test_mm():
-        filename = '/home/joao/Documents/Thesis/Radial_Basis_Funtion_Networks/datasets/balance_scale'
-        df = pd.read_csv(filename, sep=",", header=None)
-        y = df[0].values
-        X = df[[1, 2, 3, 4]].values
-        X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2)
-
-        mm = GaussMultMixture(n_components=3, covariance_type='full', equal_covariances=False, component_kill=False,
-                 categorical_features=[0,1,2,3], laplace_smoothing=0.01, reg_covar=1e-6, max_iter=100, init_params='kmeans',
-                 random_state=None, warm_start=False)
-
-        mm.fit(X_train)
-        mm.predict_proba(X_test)
-
-
-    test_mm()
